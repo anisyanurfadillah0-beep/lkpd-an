@@ -858,7 +858,7 @@ function renderSiswaView() {
         classSelector.value = currentStudent?.classId || state.currentUser?.classId || '';
     }
     const selectedClassId = Number(currentStudent?.classId || state.currentUser?.classId || 0);
-    const isForSelectedClass = item => !selectedClassId || !item.classId || Number(item.classId) === selectedClassId;
+    const isForSelectedClass = item => !item.classId || (selectedClassId > 0 && Number(item.classId) === selectedClassId);
     const notificationContainer = document.getElementById('studentNotificationList');
     if (notificationContainer) {
         const visibleNotifications = state.notifications.filter(notification => isForSelectedClass(notification));
