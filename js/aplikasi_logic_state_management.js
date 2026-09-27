@@ -225,12 +225,15 @@ async function getUserProfileFromFirestore(uid) {
 
 function persistSessionProfile(profile, uid, email, displayName) {
     const role = profile && LEGAL_ROLES.has(normalizeRole(profile.role)) ? normalizeRole(profile.role) : DEFAULT_ROLE;
+    const savedClassId = state.currentUser?.id === uid ? state.currentUser.classId : undefined;
+    const classId = profile?.classId || savedClassId;
     const normalized = {
         id: uid,
         role,
         email: email || profile?.email || '',
         nama: displayName || profile?.name || profile?.displayName || email || 'Pengguna',
-        deviceId: getDeviceId()
+        deviceId: getDeviceId(),
+        ...(classId ? { classId: Number(classId) } : {})
     };
     state.currentUser = normalized;
     saveState();
@@ -1040,14 +1043,22 @@ function getCurrentStudentUser() {
     return state.users.find(user => user.id === state.currentUser?.id || user.email === state.currentUser?.email);
 }
 
-function selectStudentClass(classId) {
+async function selectStudentClass(classId) {
     const student = getCurrentStudentUser();
-    if (!student || !classId) return;
-    student.classId = Number(classId);
-    state.currentUser.id = student.id;
-    state.currentUser.classId = student.classId;
+    const selectedClass = state.classes.find(item => Number(item.id) === Number(classId));
+    if (normalizeRole(state.currentUser?.role) !== 'student' || !selectedClass) return;
+    if (student) student.classId = Number(selectedClass.id);
+    state.currentUser.classId = Number(selectedClass.id);
     saveState();
     renderSiswaView();
+    if (isFirebaseReady() && firebaseAuth.currentUser?.uid === state.currentUser.id) {
+        try {
+            await firebaseDb.collection('users').doc(state.currentUser.id).update({ classId: state.currentUser.classId });
+        } catch (error) {
+            console.error('Gagal menyimpan kelas siswa ke Firestore:', error);
+            customAlert('Kelas dipilih pada perangkat ini, tetapi gagal disimpan ke akun. Periksa koneksi lalu pilih kelas kembali.', 'Gagal Menyimpan Kelas');
+        }
+    }
 }
 function adminSaveMaterial(e) { e.preventDefault(); const c = state.classes.find(item => item.id === Number(document.getElementById('adminMaterialClass').value)); if (!c) return; const material = { id: Date.now(), judul: document.getElementById('adminMaterialTitle').value, deskripsi: document.getElementById('adminMaterialDescription').value, link: document.getElementById('adminMaterialLink').value, classId: c.id }; c.materi = c.materi || []; c.materi.unshift(material); state.materiList.unshift({ id: material.id, judul: material.judul, deskripsi: material.deskripsi, yt: '', file: material.link, classId: c.id }); addStudentNotification('Materi', material.judul, c.id, material.id, 'Materi'); saveState(); renderAdminView(); }
 function adminSendEmail(e) { e.preventDefault(); const target = document.getElementById('adminEmailTarget'); const subject = document.getElementById('adminEmailSubject').value; const message = document.getElementById('adminEmailMessage').value; state.emailLogs.push({ date: new Date().toISOString(), target: target.value === 'all' ? 'Semua pengguna' : state.users.find(u => u.id === Number(target.value))?.email, subject, message }); addStudentNotification('Pengumuman', subject, null); saveState(); customAlert('Broadcast tercatat untuk penerima yang dipilih.', 'Email Berhasil'); renderAdminView(); }
