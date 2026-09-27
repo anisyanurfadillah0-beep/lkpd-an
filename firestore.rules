@@ -82,6 +82,12 @@ service cloud.firestore {
       );
     }
 
+    match /appData/{documentId} {
+      allow read: if isSignedIn() && isValidRole(roleOf(request.auth.uid));
+      allow write: if isSignedIn()
+        && roleOf(request.auth.uid) in ['teacher', 'admin'];
+    }
+
     match /{document=**} {
       allow read: if isSignedIn() && roleOf(request.auth.uid) == 'admin';
       allow write: if false;

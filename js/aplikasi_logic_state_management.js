@@ -11,7 +11,18 @@ const firebaseConfig = {
 
 const DEFAULT_ROLE = 'student';
 const LEGAL_ROLES = new Set(['student', 'teacher', 'admin']);
+async function saveLearningContentToFirestore() {
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) {
+        throw new Error('Pengguna belum login ke Firebase.');
+    }
 
+    await firebaseDb.collection('appData').doc('learningContent').set({
+        classes: state.classes,
+        materiList: state.materiList,
+        taskList: state.taskList,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+}
 function normalizeRole(role) {
     const normalized = String(role || '').trim().toLowerCase();
     if (normalized === 'siswa') return 'student';
@@ -105,18 +116,77 @@ function saveState() {
     localStorage.setItem('mathlearn_state', JSON.stringify(state));
 }
 
+async function saveLearningContent() {
+    saveState();
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) return null;
+
+    const content = {
+        classes: state.classes,
+        materiList: state.materiList,
+        taskList: state.taskList,
+        notifications: state.notifications
+    };
+
+    if (new Blob([JSON.stringify(content)]).size > 900 * 1024) {
+        customAlert('Konten terlalu besar untuk satu dokumen Firestore. Kurangi ukuran/jumlah foto soal atau simpan foto di Firebase Storage.', 'Konten Terlalu Besar');
+        return false;
+    }
+
+    try {
+        await firebaseDb.collection('appData').doc('learningContent').set(content, { merge: true });
+        return true;
+    } catch (error) {
+        console.error('Gagal menyinkronkan konten ke Firestore:', error);
+        customAlert('Perubahan tersimpan di perangkat ini, tetapi gagal disinkronkan. Periksa login, Firestore Rules, dan koneksi internet.', 'Sinkronisasi Gagal');
+        return false;
+    }
+}
+
+async function loadLearningContent() {
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) return false;
+
+    try {
+        const snapshot = await firebaseDb.collection('appData').doc('learningContent').get();
+        if (!snapshot.exists) {
+            const role = normalizeRole(state.currentUser?.role);
+            if (role === 'teacher' || role === 'admin') await saveLearningContent();
+            return false;
+        }
+
+        const content = snapshot.data();
+        if (Array.isArray(content.classes)) state.classes = content.classes;
+        if (Array.isArray(content.materiList)) state.materiList = content.materiList;
+        if (Array.isArray(content.notifications)) state.notifications = content.notifications;
+        if (content.taskList && typeof content.taskList === 'object') {
+            ['Lkpd', 'Latihan', 'Evaluasi'].forEach(type => {
+                if (Array.isArray(content.taskList[type])) {
+                    state.taskList[type] = content.taskList[type].map(task => ({
+                        ...task,
+                        questions: Array.isArray(task.questions) && task.questions.length > 0
+                            ? task.questions
+                            : [task.content || '']
+                    }));
+                }
+            });
+        }
+        saveState();
+        return true;
+    } catch (error) {
+        console.error('Gagal memuat konten dari Firestore:', error);
+        customAlert('Konten Firestore gagal dimuat. Data lokal perangkat ini tetap digunakan.', 'Gagal Memuat Konten');
+        return false;
+    }
+}
+
 function isFirebaseReady() {
     return firebaseReady && !!firebaseAuth && !!firebaseDb;
 }
 
-function safePageInit(expectedRole, alsoRender = false) {
+function safePageInit(expectedRole) {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
     try {
         checkExistingSession(expectedRole);
-        if (alsoRender) {
-            renderAdminView();
-        }
     } catch (error) {
         console.error('Gagal menginisialisasi halaman:', error);
         const modal = document.getElementById('customModal');
@@ -439,64 +509,7 @@ function getDeviceId() {
     return deviceId;
 }
 
-async function checkExistingSession(expectedRole) {
-    if (expectedRole && expectedRole !== 'login') {
-        const isAllowed = await ensureAuthorizedDashboard(expectedRole);
-        if (!isAllowed) return;
-    }
-
-    if (isFirebaseReady() && firebaseAuth.currentUser) {
-        firebaseAuth.onAuthStateChanged(async (user) => {
-            if (!user) {
-                if (window.location.pathname.endsWith('dashboard_siswa.html') || window.location.pathname.endsWith('dashboard_guru.html') || window.location.pathname.endsWith('dashboard_admin.html')) {
-                    window.location.assign('./halaman_login_registrasi.html');
-                }
-                return;
-            }
-
-            const profile = await getUserProfileFromFirestore(user.uid);
-            const profileRole = normalizeRole(profile?.role);
-            if (!profile || !profileRole || !LEGAL_ROLES.has(profileRole)) {
-                customAlert('Akun Anda belum siap. Hubungi admin untuk aktivasi.', 'Akses Ditolak');
-                await firebaseAuth.signOut();
-                return;
-            }
-
-            persistSessionProfile({ ...profile, role: profileRole }, user.uid, user.email, profile.name || user.email);
-            if (expectedRole === 'login') {
-                routeByRole(profileRole);
-                return;
-            }
-            if (expectedRole && profileRole !== normalizeRole(expectedRole)) {
-                routeByRole(profileRole);
-                return;
-            }
-            if (normalizeRole(expectedRole) === 'student') {
-                renderSiswaView();
-                switchStudentTab(getTabFromHash('materi', ['materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
-            }
-            if (normalizeRole(expectedRole) === 'teacher') {
-                ['Lkpd', 'Latihan', 'Evaluasi'].forEach(type => {
-                    const container = document.getElementById(`form${type}Questions`);
-                    if (container && container.children.length === 0) addQuestionField(type);
-                });
-                renderGuruView();
-                switchTeacherTab(getTabFromHash('materi', ['kelas', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
-            }
-            if (normalizeRole(expectedRole) === 'admin') {
-                renderAdminView();
-            }
-        });
-        return;
-    }
-
-    if (!state.currentUser) {
-        if (window.location.pathname.endsWith('dashboard_siswa.html') || window.location.pathname.endsWith('dashboard_guru.html') || window.location.pathname.endsWith('dashboard_admin.html')) {
-            window.location.assign('./halaman_login_registrasi.html');
-        }
-        return;
-    }
-
+function renderDashboardForRole(expectedRole) {
     const userLabel = document.getElementById('currentUserLabel');
     const roleBadge = document.getElementById('currentRoleBadge');
     const currentRole = normalizeRole(state.currentUser.role);
@@ -529,6 +542,59 @@ async function checkExistingSession(expectedRole) {
     if (normalizeRole(expectedRole) === 'admin') {
         renderAdminView();
     }
+}
+
+async function checkExistingSession(expectedRole) {
+    if (isFirebaseReady()) {
+        firebaseAuth.onAuthStateChanged(async (user) => {
+            try {
+                if (!user) {
+                    if (!state.currentUser) {
+                        if (window.location.pathname.includes('dashboard_')) {
+                            window.location.assign('./halaman_login_registrasi.html');
+                        }
+                        return;
+                    }
+                    renderDashboardForRole(expectedRole);
+                    return;
+                }
+
+                const profile = await getUserProfileFromFirestore(user.uid);
+                const profileRole = normalizeRole(profile?.role);
+                if (!profile || !LEGAL_ROLES.has(profileRole)) {
+                    customAlert('Akun Anda belum siap. Hubungi admin untuk aktivasi.', 'Akses Ditolak');
+                    await firebaseAuth.signOut();
+                    return;
+                }
+
+                persistSessionProfile({ ...profile, role: profileRole }, user.uid, user.email, profile.name || user.email);
+                if (expectedRole === 'login') {
+                    routeByRole(profileRole);
+                    return;
+                }
+                if (expectedRole && profileRole !== normalizeRole(expectedRole)) {
+                    routeByRole(profileRole);
+                    return;
+                }
+
+                await loadLearningContent();
+                renderDashboardForRole(expectedRole);
+            } catch (error) {
+                console.error('Gagal memeriksa sesi Firebase:', error);
+                customAlert('Sesi gagal dimuat. Periksa koneksi Firebase lalu muat ulang halaman.', 'Gagal Memuat Sesi');
+            }
+        });
+        return;
+    }
+
+    if (!state.currentUser) {
+        if (window.location.pathname.includes('dashboard_')) {
+            window.location.assign('./halaman_login_registrasi.html');
+        }
+        return;
+    }
+
+    renderDashboardForRole(expectedRole);
 }
 
 function getTabFromHash(defaultTab, allowedTabs) {
@@ -610,10 +676,10 @@ function adminPanelMarkup(panel) {
     return `<div class='grid md:grid-cols-2 gap-4'><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.classes.length} Kelas</b><p class='text-sm text-slate-600 mt-2'>Kelas dapat dibuat dan dihapus dari tab Konten Web.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>Akun Firebase</b><p class='text-sm text-slate-600 mt-2'>Siswa mendaftar langsung; akun guru dan admin dibuat melalui Firebase Authentication dan Firestore.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.materiList.length + state.classes.reduce((n, c) => n + (c.materi || []).length, 0)} Materi</b><p class='text-sm text-slate-600 mt-2'>Gunakan tab Konten Web untuk mengelola materi per kelas.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.emailLogs.length} Pengumuman</b><p class='text-sm text-slate-600 mt-2'>Gunakan tab Email Pengguna untuk mengelola catatan pengumuman.</p></div></div>`;
 }
 
-function adminSaveClass(e) { e.preventDefault(); state.classes.unshift({ id: Date.now(), nama: document.getElementById('adminClassName').value, deskripsi: document.getElementById('adminClassDescription').value, materi: [] }); saveState(); renderAdminView(); }
-function adminDeleteClass(id) { customConfirm('Hapus kelas beserta materi di dalamnya?', () => { state.classes = state.classes.filter(c => c.id !== id); state.materiList = state.materiList.filter(m => m.classId !== id); removeClassNotifications(id); saveState(); renderAdminView(); }); }
-function adminSaveMaterial(e) { e.preventDefault(); const c = state.classes.find(item => item.id === Number(document.getElementById('adminMaterialClass').value)); if (!c) return; const material = { id: Date.now(), judul: document.getElementById('adminMaterialTitle').value, deskripsi: document.getElementById('adminMaterialDescription').value, link: document.getElementById('adminMaterialLink').value, classId: c.id }; c.materi = c.materi || []; c.materi.unshift(material); state.materiList.unshift({ id: material.id, judul: material.judul, deskripsi: material.deskripsi, yt: '', file: material.link, classId: c.id }); addStudentNotification('Materi', material.judul, c.id, material.id, 'Materi'); saveState(); renderAdminView(); }
-function adminDeleteMaterial(classId, materialId) { const currentClass = state.classes.find(c => c.id === classId); if (!currentClass) return; currentClass.materi = currentClass.materi.filter(m => m.id !== materialId); state.materiList = state.materiList.filter(m => m.id !== materialId); removeContentNotification(materialId, 'Materi'); saveState(); renderAdminView(); }
+async function adminSaveClass(e) { e.preventDefault(); state.classes.unshift({ id: Date.now(), nama: document.getElementById('adminClassName').value, deskripsi: document.getElementById('adminClassDescription').value, materi: [] }); await saveLearningContent(); renderAdminView(); }
+function adminDeleteClass(id) { customConfirm('Hapus kelas beserta materi di dalamnya?', async () => { state.classes = state.classes.filter(c => c.id !== id); state.materiList = state.materiList.filter(m => m.classId !== id); removeClassNotifications(id); await saveLearningContent(); renderAdminView(); }); }
+async function adminSaveMaterial(e) { e.preventDefault(); const c = state.classes.find(item => item.id === Number(document.getElementById('adminMaterialClass').value)); if (!c) return; const material = { id: Date.now(), judul: document.getElementById('adminMaterialTitle').value, deskripsi: document.getElementById('adminMaterialDescription').value, link: document.getElementById('adminMaterialLink').value, classId: c.id }; c.materi = c.materi || []; c.materi.unshift(material); state.materiList.unshift({ id: material.id, judul: material.judul, deskripsi: material.deskripsi, yt: '', file: material.link, classId: c.id }); addStudentNotification('Materi', material.judul, c.id, material.id, 'Materi'); await saveLearningContent(); renderAdminView(); }
+async function adminDeleteMaterial(classId, materialId) { const currentClass = state.classes.find(c => c.id === classId); if (!currentClass) return; currentClass.materi = currentClass.materi.filter(m => m.id !== materialId); state.materiList = state.materiList.filter(m => m.id !== materialId); removeContentNotification(materialId, 'Materi'); await saveLearningContent(); renderAdminView(); }
 function adminSendEmail(e) { e.preventDefault(); const target = document.getElementById('adminEmailTarget'); state.emailLogs.push({ date: new Date().toISOString(), target: target.value === 'all' ? 'Semua pengguna' : state.users.find(u => u.id === Number(target.value))?.email, subject: document.getElementById('adminEmailSubject').value, message: document.getElementById('adminEmailMessage').value }); saveState(); customAlert('Broadcast tercatat untuk penerima yang dipilih.', 'Email Berhasil'); renderAdminView(); }
 
 function switchAdminPanel(panelKey) {
@@ -1134,7 +1200,7 @@ function renderGuruView() {
     }
 }
 
-function saveClassByGuru(e) {
+async function saveClassByGuru(e) {
     e.preventDefault();
     const form = e.target;
     const editingId = Number(form.dataset.editingId || 0);
@@ -1147,7 +1213,7 @@ function saveClassByGuru(e) {
     } else {
         state.classes.unshift({ id: Date.now(), nama: name, deskripsi: description, materi: [] });
     }
-    saveState();
+    await saveLearningContent();
     form.reset();
     customAlert(editingId ? 'Kelas berhasil diperbarui.' : 'Kelas baru berhasil ditambahkan.', 'Kelas Tersimpan');
     renderGuruView();
@@ -1166,7 +1232,7 @@ function editClassByGuru(id) {
 function deleteClassByGuru(id) {
     const currentClass = state.classes.find(item => item.id === id);
     if (!currentClass) return;
-    customConfirm(`Hapus kelas "${currentClass.nama}" beserta materi dan soal yang terhubung?`, () => {
+    customConfirm(`Hapus kelas "${currentClass.nama}" beserta materi dan soal yang terhubung?`, async () => {
         state.classes = state.classes.filter(item => item.id !== id);
         removeClassNotifications(id);
         state.materiList = state.materiList.filter(item => item.classId !== id);
@@ -1180,7 +1246,7 @@ function deleteClassByGuru(id) {
             document.getElementById('guruClassForm').reset();
             delete document.getElementById('guruClassForm').dataset.editingId;
         }
-        saveState();
+        await saveLearningContent();
         renderGuruView();
         customAlert(`Kelas "${currentClass.nama}" berhasil dihapus.`, 'Kelas Dihapus');
     });
@@ -1380,7 +1446,7 @@ function downloadBlob(filename, content, type) {
     URL.revokeObjectURL(link.href);
 }
 
-function addMateriByGuru(e) {
+async function addMateriByGuru(e) {
     e.preventDefault();
     const form = e.target;
     const editingId = Number(form.dataset.editingId || 0);
@@ -1399,8 +1465,10 @@ function addMateriByGuru(e) {
         state.materiList.unshift(newM);
         addStudentNotification('Materi', newM.judul, newM.classId, newM.id, 'Materi');
     }
-    saveState();
-    customAlert("Materi sukses dipublikasikan ke seluruh siswa!", "Sukses");
+    const syncResult = await saveLearningContent();
+    if (syncResult !== false) {
+        customAlert(syncResult ? 'Materi tersimpan dan tersinkron ke Firestore.' : 'Materi tersimpan di perangkat ini saja karena Firebase belum aktif.', 'Materi Tersimpan');
+    }
     e.target.reset();
     renderGuruView();
 }
@@ -1419,10 +1487,10 @@ function editMateri(id) {
 }
 
 function deleteMateri(id) {
-    customConfirm("Apakah Anda yakin ingin menghapus materi ini?", () => {
+    customConfirm("Apakah Anda yakin ingin menghapus materi ini?", async () => {
         state.materiList = state.materiList.filter(m => m.id !== id);
         removeContentNotification(id, 'Materi');
-        saveState();
+        await saveLearningContent();
         renderGuruView();
     });
 }
@@ -1506,14 +1574,17 @@ async function saveNewTask(e, type) {
         state.taskList[type].unshift(newTask);
         addStudentNotification(type === 'Lkpd' ? 'LKPD' : type, newTask.title, newTask.classId, newTask.id, type);
     }
+    let syncResult;
     try {
-        saveState();
+        syncResult = await saveLearningContent();
     } catch (error) {
         if (submitButton) submitButton.disabled = false;
         customAlert('Soal tidak tersimpan. Ukuran foto terlalu besar untuk penyimpanan browser. Gunakan foto yang lebih kecil.', 'Penyimpanan Gagal');
         return;
     }
-    customAlert(`${type} berhasil ditambahkan & dipublikasikan!`, "Sukses");
+    if (syncResult !== false) {
+        customAlert(syncResult ? `${type} berhasil disimpan dan disinkronkan ke Firestore.` : `${type} tersimpan di perangkat ini saja karena Firebase belum aktif.`, 'Tugas Tersimpan');
+    }
     e.target.reset();
     if (submitButton) submitButton.disabled = false;
     renderGuruView();
@@ -1622,10 +1693,10 @@ function renumberQuestionFields(type) {
 }
 
 function deleteTask(type, id) {
-    customConfirm(`Apakah Anda yakin ingin menghapus data ${type} ini?`, () => {
+    customConfirm(`Apakah Anda yakin ingin menghapus data ${type} ini?`, async () => {
         state.taskList[type] = state.taskList[type].filter(t => t.id !== id);
         removeContentNotification(id, type);
-        saveState();
+        await saveLearningContent();
         renderGuruView();
     });
 }
