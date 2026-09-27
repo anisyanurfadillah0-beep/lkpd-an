@@ -1,0 +1,25 @@
+{
+  "admin": {
+    "uid": "XqlS92uxvad0FhLp0uL3o7tyhgA2",
+    "name": "Anisya Nur Fadillah",
+    "email": "anisyanurfadillah0@gmail.com",
+    "role": "admin",
+     "classIds": [],
+    "createdAt": "2026-09-27T00:00:00.000Z"
+  },
+  "teacher": {
+    "uid": "teacher_uid_here",
+    "name": "Guru Matematika",
+    "email": "guru@mathlearn.id",
+    "role": "teacher",
+    "createdAt": "2026-09-27T00:00:00.000Z",
+    "teacherInvitations": [
+      {
+        "code": "TEACHER-INV-2026-001",
+        "status": "used",
+        "expiresAt": "2027-01-01T00:00:00.000Z",
+        "usedByUid": "teacher_uid_here"
+      }
+    ]
+  }
+}

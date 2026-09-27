@@ -1,0 +1,10 @@
+{
+  "cleanUrls": false,
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/halaman_login_registrasi", "destination": "/halaman_login_registrasi.html" },
+    { "source": "/dashboard_siswa", "destination": "/dashboard_siswa.html" },
+    { "source": "/dashboard_guru", "destination": "/dashboard_guru.html" },
+    { "source": "/dashboard_admin", "destination": "/dashboard_admin.html" }
+  ]
+}

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MathLearn AI - Portal Siswa</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col antialiased">
+
+    <div id="customModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] hidden flex items-center justify-center p-4">
+        <div class="bg-white max-w-sm w-full rounded-2xl p-6 shadow-2xl animate-fade border border-slate-100">
+            <h3 id="modalTitle" class="text-lg font-extrabold text-slate-900 mb-2">Notifikasi</h3>
+            <p id="modalMessage" class="text-sm text-slate-600 mb-6 leading-relaxed"></p>
+            <div class="flex justify-end gap-3" id="modalActions"></div>
+        </div>
+    </div>
+
+    <div id="modalAntiCheat" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[150] hidden flex items-center justify-center p-4">
+        <div class="bg-white max-w-md w-full rounded-3xl p-6 text-center border-2 border-rose-500 shadow-2xl animate-fade">
+            <div class="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl font-black">⚠️</div>
+            <h3 class="text-xl font-black text-slate-900">PERINGATAN KECURANGAN!</h3>
+            <p class="text-xs text-slate-600 mt-2">Anda terdeteksi meninggalkan halaman / berpindah tab saat ujian atau evaluasi berlangsung.</p>
+            <div class="bg-rose-50 border border-rose-200 rounded-xl p-3 my-4 text-left">
+                <p class="text-[11px] font-bold text-rose-800">Detail Pelanggaran:</p>
+                <p class="text-[10px] text-rose-700 mt-0.5">Waktu: <span id="cheatTimestamp" class="font-mono">-</span></p>
+                <p class="text-[10px] text-rose-700">Pelanggaran Ke: <span id="cheatCountDisplay" class="font-bold">0</span> kali (Akan dilaporkan ke Guru)</p>
+            </div>
+            <button onclick="closeCheatModal()" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl text-xs transition">
+                Saya Mengerti & Kembali Mengerjakan
+            </button>
+        </div>
+    </div>
+
+    <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50 border-b border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3 cursor-pointer" onclick="window.location.assign('./halaman_login_registrasi.html')">
+                <div class="w-10 h-10 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-xl flex items-center justify-center font-black text-xl shadow-md text-white">∑</div>
+                <div>
+                    <h1 class="font-extrabold text-lg tracking-tight bg-gradient-to-r from-blue-400 to-indigo-200 bg-clip-text text-transparent">MathLearn AI</h1>
+                    <p class="text-[10px] text-slate-400 -mt-1 font-medium">Teorema Pythagoras & Geometri</p>
+                </div>
+            </div>
+            <div id="sessionNavInfo" class="flex items-center space-x-4">
+                <div class="flex items-center space-x-2 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span id="currentUserLabel" class="text-xs font-semibold text-slate-200">Siswa</span>
+                    <span id="currentRoleBadge" class="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full uppercase">Siswa</span>
+                </div>
+                <button onclick="logout()" class="text-xs text-rose-400 hover:text-rose-300 font-bold bg-rose-950/40 hover:bg-rose-900/50 px-3 py-1.5 rounded-lg transition border border-rose-800/50">
+                    Keluar
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 animate-fade">
+        <!-- Banner Header -->
+        <div class="bg-gradient-to-r from-blue-700 via-indigo-700 to-purple-800 rounded-3xl p-6 md:p-8 text-white shadow-xl mb-8 relative overflow-hidden">
+            <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div>
+                    <span class="bg-white/20 text-blue-100 text-[11px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider backdrop-blur-md">Portal Pembelajaran Siswa</span>
+                    <h2 class="text-2xl md:text-4xl font-black mt-2">Teorema Pythagoras & Aplikasi</h2>
+                    <p class="text-blue-200 text-sm mt-1 max-w-xl">Akses materi, kerjakan tugas sesuai pertemuan, dan lihat hasil evaluasi secara terstruktur.</p>
+                </div>
+                <div class="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/10 min-w-[220px]">
+                    <label for="studentClassSelector" class="block text-[10px] text-blue-100 uppercase font-bold mb-2">Masuk ke Kelas</label>
+                    <select id="studentClassSelector" onchange="selectStudentClass(this.value)" class="w-full bg-white text-slate-800 p-2.5 rounded-xl text-xs font-bold outline-none">
+                        <option value="">Pilih kelas</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <section class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <span class="inline-flex items-center gap-2 text-[10px] font-black uppercase text-blue-600 bg-blue-100 px-3 py-1 rounded-full"><span id="studentNotificationDot" class="hidden w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>Notifikasi Pembelajaran</span>
+                    <h3 class="text-lg font-extrabold text-slate-900 mt-2">Materi & Soal Terbaru</h3>
+                </div>
+                <span class="text-xs text-slate-500">Update dari guru</span>
+            </div>
+            <div id="studentNotificationList" class="grid md:grid-cols-2 gap-3"></div>
+        </section>
+
+        <!-- Navigation Tabs Siswa -->
+        <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-4 mb-6">
+            <button onclick="switchStudentTab('materi')" id="tabSiswaMateri" class="tab-siswa-btn active px-5 py-2.5 rounded-xl text-xs font-bold transition bg-blue-600 text-white shadow-md">1. Bahan Materi</button>
+            <button onclick="switchStudentTab('lkpd')" id="tabSiswaLkpd" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">2. LKPD</button>
+            <button onclick="switchStudentTab('latihan')" id="tabSiswaLatihan" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">3. Latihan Soal</button>
+            <button onclick="switchStudentTab('evaluasi')" id="tabSiswaEvaluasi" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">4. Evaluasi Akhir</button>
+            <button onclick="switchStudentTab('hasil')" id="tabSiswaHasil" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 shadow-sm flex items-center gap-1">✨ Hasil & Review Guru</button>
+        </div>
+
+        <!-- SUB-TAB 1: BAHAN MATERI -->
+        <div id="subSiswaMateri" class="sub-siswa-panel space-y-6">
+            <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <h3 class="text-lg font-extrabold text-slate-900 mb-2">📚 Referensi & Modul Pembelajaran</h3>
+                <div id="siswaMateriContainer" class="grid md:grid-cols-2 gap-6 mt-6"></div>
+            </div>
+        </div>
+
+        <!-- SUB-TAB 2: LKPD -->
+        <div id="subSiswaLkpd" class="sub-siswa-panel hidden space-y-6">
+            <div id="siswaLkpdListView" class="space-y-4">
+                <h3 class="text-lg font-extrabold text-slate-900">Daftar Lembar Kerja (Per Pertemuan)</h3>
+                <div id="siswaLkpdListContainer" class="grid gap-4"></div>
+            </div>
+            <div id="siswaLkpdDetailView" class="hidden bg-white rounded-2xl p-6 border border-slate-200 shadow-sm relative">
+                <button onclick="closeStudentTask('Lkpd')" class="absolute top-6 right-6 text-slate-400 hover:text-slate-700 text-sm font-bold bg-slate-100 px-3 py-1.5 rounded-lg">Kembali</button>
+                <span class="bg-blue-100 text-blue-700 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase">LKPD Terjadwal</span>
+                <h3 id="siswaLkpdTitle" class="text-xl font-extrabold text-slate-900 mt-2 mb-4">Judul LKPD</h3>
+                
+                <div id="siswaLkpdQuestionBox" class="bg-slate-50 p-5 rounded-2xl border border-slate-200 text-sm text-slate-700 mb-6 leading-relaxed whitespace-pre-wrap"></div>
+                
+                <div class="space-y-4">
+                    <input type="hidden" id="siswaLkpdActiveId">
+                    <div class="flex items-center justify-between bg-blue-50 px-4 py-3 rounded-xl border border-blue-100">
+                        <span id="siswaLkpdQuestionProgress" class="text-xs font-bold text-blue-800">Soal 1 dari 1</span>
+                        <span class="text-[11px] text-blue-700">Waktu tersisa: <b id="siswaLkpdTimer">--:--:--</b></span>
+                    </div>
+                    <div>
+                        <label id="siswaLkpdAnswerLabel" class="block text-xs font-bold text-slate-700 mb-1">Jawaban Soal:</label>
+                        <textarea id="siswaLkpdJawaban" rows="4" class="w-full p-4 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ketik jawaban di sini..."></textarea>
+                        <div class="mt-2 flex flex-wrap gap-1.5" aria-label="Keyboard persamaan">
+                            <span class="text-[10px] font-bold text-slate-500 self-center mr-1">∑</span>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','²')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">x²</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','√')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">√</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','π')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">π</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','±')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">±</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','÷')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">÷</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','×')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">×</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','≤')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">≤</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','≥')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">≥</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','°')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">°</button>
+                            <button type="button" onclick="insertEquationSymbol('siswaLkpdJawaban','→')" class="equation-key px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold">→</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Unggah Dokumen (Opsional):</label>
+                        <input type="file" id="fileLkpdUpload" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    </div>
+                    <div class="flex flex-wrap gap-3">
+                        <button onclick="nextStudentQuestion('Lkpd')" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl text-xs transition">Lanjutkan</button>
+                        <button onclick="submitSiswaWork('Lkpd')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-3 rounded-xl text-xs transition shadow-md">Kirimkan Tugas LKPD</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SUB-TAB 3: LATIHAN SOAL -->
+        <div id="subSiswaLatihan" class="sub-siswa-panel hidden space-y-6">
+            <div id="siswaLatihanListView" class="space-y-4">
+                <h3 class="text-lg font-extrabold text-slate-900">Daftar Latihan Soal (Per Materi)</h3>
+                <div id="siswaLatihanListContainer" class="grid gap-4"></div>
+            </div>
+            <div id="siswaLatihanDetailView" class="hidden bg-white rounded-2xl p-6 border border-slate-200 shadow-sm relative">
+                <button onclick="closeStudentTask('Latihan')" class="absolute top-6 right-6 text-slate-400 hover:text-slate-700 text-sm font-bold bg-slate-100 px-3 py-1.5 rounded-lg">Kembali</button>
+                <span class="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase">Latihan Mandiri</span>
+                <h3 id="siswaLatihanTitle" class="text-xl font-extrabold text-slate-900 mt-2 mb-4">Judul Latihan</h3>
+                
+                <div id="siswaLatihanQuestionBox" class="bg-slate-50 p-5 rounded-2xl border border-slate-200 text-sm text-slate-700 mb-6 leading-relaxed whitespace-pre-wrap"></div>
+                
+                <div class="space-y-4">
+                    <input type="hidden" id="siswaLatihanActiveId">
+                    <div class="flex items-center justify-between bg-emerald-50 px-4 py-3 rounded-xl border border-emerald-100">
+                        <span id="siswaLatihanQuestionProgress" class="text-xs font-bold text-emerald-800">Soal 1 dari 1</span>
+                        <span class="text-[11px] text-emerald-700">Waktu tersisa: <b id="siswaLatihanTimer">--:--:--</b></span>
+                    </div>
+                    <div>
+                        <label id="siswaLatihanAnswerLabel" class="block text-xs font-bold text-slate-700 mb-1">Jawaban Soal:</label>
+                        <textarea id="siswaLatihanJawaban" rows="4" class="w-full p-4 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Ketik jawaban di sini..."></textarea>
+                        <div class="mt-2 flex flex-wrap gap-1.5" aria-label="Keyboard persamaan">
+                            <span class="text-[10px] font-bold text-slate-500 self-center mr-1">∑</span>
+                            <button type="button" onclick="showEquationKeyboard('siswaLatihanJawaban')" class="equation-key px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold">Buka simbol</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Unggah Lampiran Coretan (Opsional):</label>
+                        <input type="file" id="fileLatihanUpload" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100">
+                    </div>
+                    <div class="flex flex-wrap gap-3">
+                        <button onclick="nextStudentQuestion('Latihan')" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl text-xs transition">Lanjutkan</button>
+                        <button onclick="submitSiswaWork('Latihan')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-3 rounded-xl text-xs transition shadow-md">Kirimkan Latihan Soal</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SUB-TAB 4: EVALUASI (ANTI-CHEAT ACTIVE) -->
+        <div id="subSiswaEvaluasi" class="sub-siswa-panel hidden space-y-6">
+            <div id="siswaEvaluasiListView" class="space-y-4">
+                <h3 class="text-lg font-extrabold text-slate-900">Daftar Evaluasi Akhir (Per Materi)</h3>
+                <div id="siswaEvaluasiListContainer" class="grid gap-4"></div>
+            </div>
+            <div id="siswaEvaluasiDetailView" class="hidden bg-white rounded-2xl p-6 border-2 border-rose-200 shadow-md relative overflow-hidden">
+                <button onclick="closeStudentTask('Evaluasi')" class="absolute top-10 right-6 text-slate-400 hover:text-slate-700 text-sm font-bold bg-slate-100 px-3 py-1.5 rounded-lg z-10">Kembali</button>
+                <div class="bg-rose-600 text-white text-[10px] font-black tracking-widest px-4 py-1 absolute top-0 right-0 rounded-bl-xl uppercase flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-white animate-ping"></span> AI Anti-Cheat Monitor Active
+                </div>
+                <h3 id="siswaEvaluasiTitle" class="text-xl font-extrabold text-slate-900 mt-4 mb-2">Judul Evaluasi</h3>
+                <p class="text-xs text-rose-600 font-bold mb-4">⚠️ Peringatan: Sistem mengawasi aktivitas Anda. Pindah tab akan dicatat AI!</p>
+                
+                <div id="siswaEvaluasiQuestionBox" class="bg-rose-50/50 p-5 rounded-2xl border border-rose-100 text-sm text-slate-800 mb-6 font-medium whitespace-pre-wrap"></div>
+                
+                <div class="space-y-4">
+                    <input type="hidden" id="siswaEvaluasiActiveId">
+                    <div class="flex items-center justify-between bg-rose-50 px-4 py-3 rounded-xl border border-rose-100">
+                        <span id="siswaEvaluasiQuestionProgress" class="text-xs font-bold text-rose-800">Soal 1 dari 1</span>
+                        <span class="text-[11px] text-rose-700">Waktu tersisa: <b id="siswaEvaluasiTimer">--:--:--</b></span>
+                    </div>
+                    <div>
+                        <label id="siswaEvaluasiAnswerLabel" class="block text-xs font-bold text-slate-700 mb-1">Jawaban Soal:</label>
+                        <textarea id="siswaEvaluasiJawaban" rows="5" class="w-full p-4 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Ketik jawaban di sini..."></textarea>
+                        <div class="mt-2 flex flex-wrap gap-1.5" aria-label="Keyboard persamaan">
+                            <span class="text-[10px] font-bold text-slate-500 self-center mr-1">∑</span>
+                            <button type="button" onclick="showEquationKeyboard('siswaEvaluasiJawaban')" class="equation-key px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 text-xs font-bold">Buka simbol</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Unggah Lembar Jawaban Resmi:</label>
+                        <input type="file" id="fileEvaluasiUpload" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100">
+                    </div>
+                    <div class="flex flex-wrap gap-3">
+                        <button onclick="nextStudentQuestion('Evaluasi')" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl text-xs transition">Lanjutkan</button>
+                        <button onclick="submitSiswaWork('Evaluasi')" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-8 py-3.5 rounded-xl text-xs transition shadow-lg shadow-rose-500/20">Kirimkan Evaluasi Akhir</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SUB-TAB 5: HASIL & REVIEW GURU -->
+        <div id="subSiswaHasil" class="sub-siswa-panel hidden space-y-6">
+            <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <h3 class="text-lg font-extrabold text-slate-900 mb-2">📊 Hasil Pengerjaan & Feedback Guru</h3>
+                <p class="text-xs text-slate-500 mb-6">Tugas yang telah dinilai dan diberikan catatan oleh pendidik akan muncul di sini.</p>
+                
+                <div id="siswaHasilContainer" class="space-y-4"></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore-compat.js"></script>
+    <script src="js/aplikasi_logic_state_management.js"></script>
+    <script>
+        window.onload = function() {
+        safePageInit('student');
+        };
+    </script>
+</body>
+</html>

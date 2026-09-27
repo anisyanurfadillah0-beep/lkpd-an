@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MathLearn AI - Panel Guru & Pengajar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col antialiased">
+
+    <div id="customModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] hidden flex items-center justify-center p-4">
+        <div class="bg-white max-w-sm w-full rounded-2xl p-6 shadow-2xl animate-fade border border-slate-100">
+            <h3 id="modalTitle" class="text-lg font-extrabold text-slate-900 mb-2">Notifikasi</h3>
+            <p id="modalMessage" class="text-sm text-slate-600 mb-6 leading-relaxed"></p>
+            <div class="flex justify-end gap-3" id="modalActions"></div>
+        </div>
+    </div>
+
+    <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50 border-b border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3 cursor-pointer" onclick="window.location.assign('./halaman_login_registrasi.html')">
+                <div class="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-purple-500 rounded-xl flex items-center justify-center font-black text-xl shadow-md text-white">∑</div>
+                <div>
+                    <h1 class="font-extrabold text-lg tracking-tight bg-gradient-to-r from-indigo-400 to-purple-200 bg-clip-text text-transparent">MathLearn AI</h1>
+                    <p class="text-[10px] text-slate-400 -mt-1 font-medium">Portal Manajemen Pendidik</p>
+                </div>
+            </div>
+            <div id="sessionNavInfo" class="flex items-center space-x-4">
+                <div class="flex items-center space-x-2 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
+                    <span class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
+                    <span id="currentUserLabel" class="text-xs font-semibold text-slate-200">Guru</span>
+                    <span id="currentRoleBadge" class="text-[10px] bg-indigo-600 text-white font-bold px-2 py-0.5 rounded-full uppercase">Guru</span>
+                </div>
+                <button onclick="logout()" class="text-xs text-rose-400 hover:text-rose-300 font-bold bg-rose-950/40 hover:bg-rose-900/50 px-3 py-1.5 rounded-lg transition border border-rose-800/50">
+                    Keluar
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 animate-fade">
+        <div class="bg-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl mb-8 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div>
+                <span class="bg-indigo-600 text-white text-[11px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider">Panel Pendidik & Pengajar</span>
+                <h2 class="text-2xl md:text-4xl font-black mt-2">Kelola Pembelajaran & AI Assistant</h2>
+                <p class="text-slate-400 text-sm mt-1">Atur materi, buat soal berjadwal dengan AI, dan berikan review pada hasil siswa.</p>
+            </div>
+            <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-center min-w-[160px]">
+                <span id="teacherReviewCount" class="text-3xl font-black text-indigo-400">0</span>
+                <span class="block text-[10px] text-slate-400 uppercase font-bold mt-1">Perlu Direview</span>
+            </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-4 mb-6">
+            <button onclick="switchTeacherTab('kelas')" id="tabGuruKelas" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">1. Manajemen Kelas</button>
+            <button onclick="switchTeacherTab('materi')" id="tabGuruMateri" class="tab-guru-btn active px-4 py-2.5 rounded-xl text-xs font-bold transition bg-indigo-600 text-white shadow-md">2. Bahan Materi</button>
+            <button onclick="switchTeacherTab('lkpd')" id="tabGuruLkpd" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">3. LKPD (Per Pertemuan)</button>
+            <button onclick="switchTeacherTab('latihan')" id="tabGuruLatihan" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">4. Latihan (Per Materi)</button>
+            <button onclick="switchTeacherTab('evaluasi')" id="tabGuruEvaluasi" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">5. Evaluasi (Per Materi)</button>
+            <button onclick="switchTeacherTab('review')" id="tabGuruReview" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-emerald-600 text-white hover:bg-emerald-700 shadow-md">6. Review & Publish</button>
+        </div>
+
+        <!-- GURU TAB: MANAJEMEN KELAS -->
+        <div id="subGuruKelas" class="sub-guru-panel hidden space-y-6">
+            <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <span class="text-[10px] font-black uppercase text-indigo-600 bg-indigo-100 px-3 py-1 rounded-full">Manajemen Kelas</span>
+                        <h3 class="text-lg font-extrabold text-slate-900 mt-2">Tambah / Edit Kelas</h3>
+                    </div>
+                    <span class="text-xs text-slate-500">Kelas aktif: <b id="guruClassCount">0</b></span>
+                </div>
+                <form id="guruClassForm" onsubmit="saveClassByGuru(event)" class="grid md:grid-cols-[1fr_1.4fr_auto] gap-3 items-end">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Nama Kelas</label>
+                        <input id="guruClassName" required class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Contoh: Kelas VIII A">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Deskripsi</label>
+                        <input id="guruClassDescription" class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Deskripsi singkat kelas">
+                    </div>
+                    <button class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-3 rounded-xl text-xs transition">Simpan Kelas</button>
+                </form>
+                <div id="guruClassList" class="grid md:grid-cols-2 gap-3 mt-5"></div>
+            </div>
+        </div>
+
+        <!-- GURU SUB-TAB 1: KELOLA BAHAN MATERI -->
+        <div id="subGuruMateri" class="sub-guru-panel space-y-6">
+            <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <h3 class="text-lg font-extrabold text-slate-900 mb-4">Tambah / Kelola Bahan Materi</h3>
+                <form onsubmit="addMateriByGuru(event)" class="space-y-4 mb-8">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Unggah ke Kelas:</label>
+                        <select id="guruMateriClass" required class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Judul Materi / Referensi:</label>
+                        <input type="text" id="guruMateriJudul" required class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Contoh: Pengenalan Sisi Miring Segitiga">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Penjelasan / Paragraf Singkat:</label>
+                        <textarea id="guruMateriDeskripsi" rows="2" required class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Ringkasan materi..."></textarea>
+                    </div>
+                    <div class="grid md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Link YouTube (Opsional):</label>
+                            <input type="url" id="guruMateriLinkYt" class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Link Dokumen (Opsional):</label>
+                            <input type="url" id="guruMateriLinkFile" class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                    </div>
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl text-xs transition">
+                        + Publikasikan Materi
+                    </button>
+                </form>
+
+                <h4 class="text-sm font-extrabold text-slate-900 mb-3 border-t pt-4">Daftar Materi Aktif:</h4>
+                <div id="guruMateriListContainer" class="space-y-3"></div>
+            </div>
+        </div>
+
+        <!-- GURU SUB-TAB 2: LKPD GENERATOR -->
+        <div id="subGuruLkpd" class="sub-guru-panel hidden space-y-6">
+            <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div class="flex items-center space-x-2 mb-4">
+                    <span class="bg-purple-100 text-purple-700 text-[10px] font-black px-2.5 py-1 rounded">MANAJEMEN LKPD</span>
+                    <h3 class="text-lg font-extrabold text-slate-900">Buat & Kelola LKPD (Lembar Kerja)</h3>
+                </div>
+                
+                <form onsubmit="saveNewTask(event, 'Lkpd')" class="space-y-4 mb-8 bg-slate-50 p-5 rounded-xl border border-slate-200">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Unggah ke Kelas:</label>
+                        <select id="formLkpdClass" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-purple-500"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Label Pertemuan:</label>
+                        <input type="text" id="formLkpdTitle" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-purple-500" placeholder="Contoh: Pertemuan 1 - Konsep Dasar">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Waktu Dibuka:</label>
+                            <input type="datetime-local" id="formLkpdOpen" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Batas Waktu (Tutup):</label>
+                            <input type="datetime-local" id="formLkpdClose" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                    </div>
+
+                    <div class="pt-2 border-t border-slate-200">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Prompt AI (Opsional untuk Generate Soal Otomatis):</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="formLkpdPrompt" class="flex-1 p-3 rounded-xl border border-slate-300 text-sm outline-none" placeholder="Instruksi soal untuk AI...">
+                            <button type="button" onclick="generateSoalAI('Lkpd')" class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition">✨ Generate</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-xs font-bold text-slate-700">Daftar Soal Pertemuan:</label>
+                            <button type="button" onclick="addQuestionField('Lkpd')" class="text-xs font-bold text-purple-700 hover:text-purple-900">+ Tambah Soal</button>
+                        </div>
+                        <div id="formLkpdQuestions" class="space-y-3"></div>
+                    </div>
+                    
+                    <button type="submit" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl text-xs transition">
+                        Simpan & Update ke Siswa
+                    </button>
+                </form>
+
+                <h4 class="text-sm font-extrabold text-slate-900 mb-3">Daftar LKPD yang Tersedia:</h4>
+                <div id="guruLkpdListContainer" class="space-y-3"></div>
+            </div>
+        </div>
+
+        <!-- GURU SUB-TAB 3: LATIHAN GENERATOR -->
+        <div id="subGuruLatihan" class="sub-guru-panel hidden space-y-6">
+            <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div class="flex items-center space-x-2 mb-4">
+                    <span class="bg-emerald-100 text-emerald-700 text-[10px] font-black px-2.5 py-1 rounded">MANAJEMEN LATIHAN</span>
+                    <h3 class="text-lg font-extrabold text-slate-900">Buat & Kelola Latihan Soal</h3>
+                </div>
+                
+                <form onsubmit="saveNewTask(event, 'Latihan')" class="space-y-4 mb-8 bg-slate-50 p-5 rounded-xl border border-slate-200">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Unggah ke Kelas:</label>
+                        <select id="formLatihanClass" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-emerald-500"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Label Materi:</label>
+                        <input type="text" id="formLatihanTitle" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Contoh: Latihan Pythagoras Dasar">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Waktu Dibuka:</label>
+                            <input type="datetime-local" id="formLatihanOpen" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Batas Waktu (Tutup):</label>
+                            <input type="datetime-local" id="formLatihanClose" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                    </div>
+
+                    <div class="pt-2 border-t border-slate-200">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Prompt AI (Opsional untuk Generate Soal Otomatis):</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="formLatihanPrompt" class="flex-1 p-3 rounded-xl border border-slate-300 text-sm outline-none" placeholder="Instruksi latihan untuk AI...">
+                            <button type="button" onclick="generateSoalAI('Latihan')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition">✨ Generate</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-xs font-bold text-slate-700">Daftar Soal Latihan:</label>
+                            <button type="button" onclick="addQuestionField('Latihan')" class="text-xs font-bold text-emerald-700 hover:text-emerald-900">+ Tambah Soal</button>
+                        </div>
+                        <div id="formLatihanQuestions" class="space-y-3"></div>
+                    </div>
+                    
+                    <button type="submit" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl text-xs transition">
+                        Simpan & Update ke Siswa
+                    </button>
+                </form>
+
+                <h4 class="text-sm font-extrabold text-slate-900 mb-3">Daftar Latihan Soal yang Tersedia:</h4>
+                <div id="guruLatihanListContainer" class="space-y-3"></div>
+            </div>
+        </div>
+
+        <!-- GURU SUB-TAB 4: EVALUASI GENERATOR -->
+        <div id="subGuruEvaluasi" class="sub-guru-panel hidden space-y-6">
+            <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div class="flex items-center space-x-2 mb-4">
+                    <span class="bg-rose-100 text-rose-700 text-[10px] font-black px-2.5 py-1 rounded">MANAJEMEN EVALUASI</span>
+                    <h3 class="text-lg font-extrabold text-slate-900">Buat & Kelola Evaluasi Akhir</h3>
+                </div>
+                
+                <form onsubmit="saveNewTask(event, 'Evaluasi')" class="space-y-4 mb-8 bg-slate-50 p-5 rounded-xl border border-slate-200">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Unggah ke Kelas:</label>
+                        <select id="formEvaluasiClass" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-rose-500"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Label Evaluasi:</label>
+                        <input type="text" id="formEvaluasiTitle" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Contoh: Ujian Komprehensif Bab 1">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Waktu Dibuka:</label>
+                            <input type="datetime-local" id="formEvaluasiOpen" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-rose-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">Batas Waktu (Tutup):</label>
+                            <input type="datetime-local" id="formEvaluasiClose" required class="w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-rose-500">
+                        </div>
+                    </div>
+
+                    <div class="pt-2 border-t border-slate-200">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">Prompt AI (Opsional untuk Generate Soal Otomatis):</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="formEvaluasiPrompt" class="flex-1 p-3 rounded-xl border border-slate-300 text-sm outline-none" placeholder="Instruksi ujian evaluasi untuk AI...">
+                            <button type="button" onclick="generateSoalAI('Evaluasi')" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition">✨ Generate</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-xs font-bold text-slate-700">Daftar Soal Evaluasi:</label>
+                            <button type="button" onclick="addQuestionField('Evaluasi')" class="text-xs font-bold text-rose-700 hover:text-rose-900">+ Tambah Soal</button>
+                        </div>
+                        <div id="formEvaluasiQuestions" class="space-y-3"></div>
+                    </div>
+                    
+                    <button type="submit" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl text-xs transition">
+                        Simpan & Update ke Siswa
+                    </button>
+                </form>
+
+                <h4 class="text-sm font-extrabold text-slate-900 mb-3">Daftar Evaluasi yang Tersedia:</h4>
+                <div id="guruEvaluasiListContainer" class="space-y-3"></div>
+            </div>
+        </div>
+
+        <!-- GURU SUB-TAB 5: REVIEW & PUBLISH HASIL -->
+        <div id="subGuruReview" class="sub-guru-panel hidden space-y-6">
+            <div class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h3 class="text-xl font-extrabold text-slate-900">Koreksi & Publikasi Hasil Siswa</h3>
+                        <p class="text-xs text-slate-500 mt-0.5">Berikan ulasan pada tugas yang telah disubmit siswa lalu publikasikan agar bisa dilihat di akun siswa.</p>
+                    </div>
+                    <div class="flex flex-wrap justify-end gap-2">
+                        <button type="button" onclick="exportStudentResultsExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-[11px] transition">Unduh Excel (.xlsx)</button>
+                        <button type="button" onclick="exportStudentResultsCsv()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-xl text-[11px] transition">Unduh CSV</button>
+                        <button type="button" onclick="exportStudentResultsPdf()" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded-xl text-[11px] transition">Cetak / PDF</button>
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-3 gap-3 mb-6 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                    <select id="reviewClassFilter" onchange="renderGuruView()" class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="all">Semua Kelas</option>
+                    </select>
+                    <select id="reviewTypeFilter" onchange="renderGuruView()" class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="all">Semua Jenis</option>
+                        <option value="Lkpd">LKPD</option>
+                        <option value="Latihan">Latihan Soal</option>
+                        <option value="Evaluasi">Evaluasi</option>
+                    </select>
+                    <select id="reviewTaskFilter" onchange="renderGuruView()" class="w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="all">Semua Pertemuan / Materi</option>
+                    </select>
+                </div>
+
+                <div id="teacherReviewContainer" class="space-y-6"></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore-compat.js"></script>
+    <script src="js/aplikasi_logic_state_management.js"></script>
+    <script>
+        window.onload = function() {
+        safePageInit('teacher');
+        };
+    </script>
+</body>
+</html>
