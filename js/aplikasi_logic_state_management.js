@@ -77,17 +77,17 @@ const defaultState = {
     activeTab: 'materi',
     studentCheatLogs: [],
     materiList: [
-        { id: 1, judul: "Konsep Dasar Teorema Pythagoras", deskripsi: "Teorema Pythagoras menyatakan a² + b² = c² pada segitiga siku-siku.", yt: "https://youtube.com", file: "" }
+        { id: 1, judul: "Konsep Dasar Teorema Pythagoras", deskripsi: "Teorema Pythagoras menyatakan a² + b² = c² pada segitiga siku-siku.", yt: "https://youtube.com", file: "", classId: 1 }
     ],
     taskList: {
         Lkpd: [
-            { id: 101, title: "Pertemuan 1: Eksplorasi Tangga", content: "Sebuah tangga panjangnya 5 meter disandarkan pada tembok. Jarak ujung bawah tangga ke tembok adalah 3 meter. Hitunglah tinggi tembok yang dicapai oleh tangga!", openDate: "2023-01-01T07:00", closeDate: "2030-12-31T23:59" }
+            { id: 101, title: "Pertemuan 1: Eksplorasi Tangga", content: "Sebuah tangga panjangnya 5 meter disandarkan pada tembok. Jarak ujung bawah tangga ke tembok adalah 3 meter. Hitunglah tinggi tembok yang dicapai oleh tangga!", openDate: "2023-01-01T07:00", closeDate: "2030-12-31T23:59", classId: 1 }
         ],
         Latihan: [
-            { id: 201, title: "Latihan Materi Pythagoras Dasar", content: "Hitunglah panjang diagonal persegi panjang jika panjangnya 8 cm dan lebarnya 6 cm!", openDate: "2023-01-01T07:00", closeDate: "2030-12-31T23:59" }
+            { id: 201, title: "Latihan Materi Pythagoras Dasar", content: "Hitunglah panjang diagonal persegi panjang jika panjangnya 8 cm dan lebarnya 6 cm!", openDate: "2023-01-01T07:00", closeDate: "2030-12-31T23:59", classId: 1 }
         ],
         Evaluasi: [
-            { id: 301, title: "Evaluasi Bab 1 Komprehensif", content: "Sebuah tiang bendera setinggi 12 meter berdiri tegak. Sebuah tali diikatkan dari puncak tiang ke tanah sejauh 5 meter dari kaki tiang. Berapakah panjang tali tersebut?", openDate: "2023-01-01T07:00", closeDate: "2030-12-31T23:59" }
+            { id: 301, title: "Evaluasi Bab 1 Komprehensif", content: "Sebuah tiang bendera setinggi 12 meter berdiri tegak. Sebuah tali diikatkan dari puncak tiang ke tanah sejauh 5 meter dari kaki tiang. Berapakah panjang tali tersebut?", openDate: "2023-01-01T07:00", closeDate: "2030-12-31T23:59", classId: 1 }
         ]
     },
     studentSubmissions: []
@@ -111,6 +111,26 @@ Object.keys(state.taskList).forEach(type => {
             : [task.content || '']
     }));
 });
+
+function migrateLegacyDefaultClassContent() {
+    const defaultClassId = defaultState.classes[0].id;
+    state.materiList = state.materiList.map(item => {
+        const defaultItem = defaultState.materiList.find(candidate => candidate.id === item.id);
+        return !item.classId && defaultItem && item.judul === defaultItem.judul
+            ? { ...item, classId: defaultClassId }
+            : item;
+    });
+    Object.keys(defaultState.taskList).forEach(type => {
+        state.taskList[type] = state.taskList[type].map(item => {
+            const defaultItem = defaultState.taskList[type].find(candidate => candidate.id === item.id);
+            return !item.classId && defaultItem && item.title === defaultItem.title
+                ? { ...item, classId: defaultClassId }
+                : item;
+        });
+    });
+}
+
+migrateLegacyDefaultClassContent();
 
 function saveState() {
     localStorage.setItem('mathlearn_state', JSON.stringify(state));
@@ -169,6 +189,7 @@ async function loadLearningContent() {
                 }
             });
         }
+        migrateLegacyDefaultClassContent();
         saveState();
         return true;
     } catch (error) {
