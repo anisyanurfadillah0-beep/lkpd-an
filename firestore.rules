@@ -13,6 +13,10 @@ service cloud.firestore {
       return role in ['student', 'teacher', 'admin'];
     }
 
+    function isTeacherOrAdmin() {
+      return isSignedIn() && roleOf(request.auth.uid) in ['teacher', 'admin'];
+    }
+
     match /users/{uid} {
       allow get: if isSignedIn() && (
         request.auth.uid == uid ||
@@ -72,19 +76,13 @@ service cloud.firestore {
       );
 
       allow create: if isSignedIn()
+        && roleOf(request.auth.uid) == 'student'
         && request.resource.data.studentUid == request.auth.uid
         && request.resource.data.role == 'student';
 
-      allow update: if isSignedIn() && (
-        request.auth.uid == resource.data.studentUid ||
-        roleOf(request.auth.uid) == 'teacher' ||
-        roleOf(request.auth.uid) == 'admin'
-      );
+      allow update: if isTeacherOrAdmin();
 
-      allow delete: if isSignedIn() && (
-        roleOf(request.auth.uid) == 'teacher' ||
-        roleOf(request.auth.uid) == 'admin'
-      );
+      allow delete: if isTeacherOrAdmin();
     }
 
     match /appData/{documentId} {
