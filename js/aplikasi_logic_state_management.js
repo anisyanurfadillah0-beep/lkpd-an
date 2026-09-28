@@ -134,7 +134,19 @@ function migrateLegacyDefaultClassContent() {
 migrateLegacyDefaultClassContent();
 
 function saveState() {
-    localStorage.setItem('mathlearn_state', JSON.stringify(state));
+    const persistedState = {
+        ...state,
+        studentSubmissions: state.studentSubmissions.map(submission => ({
+            ...submission,
+            attachments: Array.isArray(submission.attachments)
+                ? submission.attachments.map(attachment => ({
+                    ...attachment,
+                    url: attachment.url?.startsWith('data:image/') ? '' : attachment.url
+                }))
+                : submission.attachments
+        }))
+    };
+    localStorage.setItem('mathlearn_state', JSON.stringify(persistedState));
 }
 
 async function saveLearningContent() {
@@ -271,12 +283,16 @@ async function saveSubmissionToFirestore(submission) {
     if (!isFirebaseReady() || !firebaseAuth.currentUser) return false;
 
     const submissionRef = firebaseDb.collection('submissions').doc(String(submission.id));
-    await submissionRef.set({
+    const payload = {
         ...submission,
         studentUid: firebaseAuth.currentUser.uid,
         role: 'student',
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    };
+    if (new Blob([JSON.stringify(payload)]).size > 800 * 1024) {
+        throw new Error('Ukuran foto gabungan terlalu besar. Kurangi jumlah foto atau unggah satu per satu.');
+    }
+    await submissionRef.set(payload);
     submission.id = submissionRef.id;
     return true;
 }
@@ -1455,7 +1471,10 @@ async function submitSiswaWork(type, confirmed = false) {
         await saveSubmissionToFirestore(submission);
     } catch (error) {
         console.error('Gagal menyimpan kiriman siswa:', error);
-        customAlert('Jawaban belum berhasil dikirim ke server. Periksa koneksi internet lalu coba lagi.', 'Pengiriman Gagal');
+        const message = error.message?.startsWith('Ukuran foto') || error.message?.startsWith('Foto ') || error.message?.startsWith('File yang dipilih')
+            ? error.message
+            : 'Foto atau jawaban gagal disimpan. Periksa koneksi dan Firestore Rules lalu coba lagi.';
+        customAlert(message, 'Pengiriman Gagal');
         return;
     }
 
@@ -1481,24 +1500,42 @@ async function submitSiswaWork(type, confirmed = false) {
 
 async function uploadStudentAttachments(attachments, submissionId) {
     if (!attachments.length) return [];
-    if (!isFirebaseReady() || !firebaseAuth.currentUser || typeof firebase.storage !== 'function') {
-        throw new Error('Firebase Storage belum tersedia.');
-    }
-
-    const storage = firebase.storage();
     return Promise.all(attachments.map(async ({ file, questionIndex }) => {
-        if (file.size > 10 * 1024 * 1024) {
-            throw new Error(`Ukuran ${file.name} melebihi batas 10 MB.`);
+        if (!file.type.startsWith('image/')) {
+            throw new Error('File yang dipilih harus berupa foto.');
         }
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const path = `submissions/${firebaseAuth.currentUser.uid}/${submissionId}/${questionIndex}_${safeName}`;
-        const snapshot = await storage.ref(path).put(file);
+        if (file.size > 12 * 1024 * 1024) {
+            throw new Error(`Foto ${file.name} melebihi batas 12 MB sebelum kompresi.`);
+        }
+
+        const bitmap = await createImageBitmap(file);
+        const maxDimension = 1280;
+        const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const context = canvas.getContext('2d');
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+
+        let dataUrl = '';
+        for (const quality of [0.76, 0.62, 0.48, 0.35]) {
+            dataUrl = canvas.toDataURL('image/jpeg', quality);
+            if (dataUrl.length <= 250 * 1024) break;
+        }
+        canvas.width = 0;
+        canvas.height = 0;
+        if (dataUrl.length > 250 * 1024) {
+            throw new Error(`Foto ${file.name} terlalu besar setelah dikompres. Pilih foto yang lebih kecil.`);
+        }
+
         return {
             questionIndex,
             fileName: file.name,
-            contentType: file.type || 'application/octet-stream',
-            storagePath: path,
-            url: await snapshot.ref.getDownloadURL()
+            contentType: 'image/jpeg',
+            url: dataUrl
         };
     }));
 }
