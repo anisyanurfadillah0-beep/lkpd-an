@@ -33,6 +33,7 @@ function normalizeRole(role) {
 let firebaseReady = false;
 let firebaseAuth = null;
 let firebaseDb = null;
+let submissionsUnsubscribe = null;
 
 function initializeFirebaseClient() {
     if (!window.firebase || !window.firebase.apps) {
@@ -197,6 +198,77 @@ async function loadLearningContent() {
         customAlert('Konten Firestore gagal dimuat. Data lokal perangkat ini tetap digunakan.', 'Gagal Memuat Konten');
         return false;
     }
+}
+
+async function loadStudentSubmissions() {
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) return false;
+
+    try {
+        const submissionsRef = firebaseDb.collection('submissions');
+        const role = normalizeRole(state.currentUser?.role);
+        const snapshot = role === 'teacher' || role === 'admin'
+            ? await submissionsRef.get()
+            : await submissionsRef.where('studentUid', '==', firebaseAuth.currentUser.uid).get();
+        state.studentSubmissions = snapshot.docs.map(doc => {
+            const numericId = Number(doc.id);
+            return { ...doc.data(), id: Number.isSafeInteger(numericId) ? numericId : doc.id };
+        });
+        saveState();
+        return true;
+    } catch (error) {
+        console.error('Gagal memuat kiriman siswa:', error);
+        customAlert('Hasil pengerjaan gagal dimuat dari server. Periksa koneksi dan Firestore Rules.', 'Gagal Memuat Kiriman');
+        return false;
+    }
+}
+
+function watchStudentSubmissions() {
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) return;
+    if (submissionsUnsubscribe) submissionsUnsubscribe();
+
+    const role = normalizeRole(state.currentUser?.role);
+    const submissionsRef = firebaseDb.collection('submissions');
+    const query = role === 'teacher' || role === 'admin'
+        ? submissionsRef
+        : submissionsRef.where('studentUid', '==', firebaseAuth.currentUser.uid);
+
+    submissionsUnsubscribe = query.onSnapshot(snapshot => {
+        state.studentSubmissions = snapshot.docs.map(doc => {
+            const numericId = Number(doc.id);
+            return { ...doc.data(), id: Number.isSafeInteger(numericId) ? numericId : doc.id };
+        });
+        saveState();
+        if (role === 'teacher' || role === 'admin') renderGuruView();
+        else renderSiswaView();
+    }, error => {
+        console.error('Gagal memantau kiriman siswa:', error);
+    });
+}
+
+async function saveSubmissionToFirestore(submission) {
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) return false;
+
+    const submissionRef = firebaseDb.collection('submissions').doc(String(submission.id));
+    await submissionRef.set({
+        ...submission,
+        studentUid: firebaseAuth.currentUser.uid,
+        role: 'student',
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    submission.id = submissionRef.id;
+    return true;
+}
+
+async function updateSubmissionInFirestore(submissionId, updates) {
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) return false;
+    await firebaseDb.collection('submissions').doc(String(submissionId)).update(updates);
+    return true;
+}
+
+async function deleteSubmissionFromFirestore(submissionId) {
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) return false;
+    await firebaseDb.collection('submissions').doc(String(submissionId)).delete();
+    return true;
 }
 
 function isFirebaseReady() {
@@ -602,6 +674,8 @@ async function checkExistingSession(expectedRole) {
                 }
 
                 await loadLearningContent();
+                await loadStudentSubmissions();
+                watchStudentSubmissions();
                 renderDashboardForRole(expectedRole);
             } catch (error) {
                 console.error('Gagal memeriksa sesi Firebase:', error);
@@ -1284,7 +1358,7 @@ function deleteClassByGuru(id) {
     });
 }
 
-function submitSiswaWork(type, confirmed = false) {
+async function submitSiswaWork(type, confirmed = false) {
     saveCurrentStudentQuestion(type);
     const session = activeStudentQuestion[type];
     const taskId = parseInt(document.getElementById(`siswa${type}ActiveId`)?.value || "0");
@@ -1336,6 +1410,14 @@ function submitSiswaWork(type, confirmed = false) {
         aiReview: "Sedang diproses AI..."
     };
 
+    try {
+        await saveSubmissionToFirestore(submission);
+    } catch (error) {
+        console.error('Gagal menyimpan kiriman siswa:', error);
+        customAlert('Jawaban belum berhasil dikirim ke server. Periksa koneksi internet lalu coba lagi.', 'Pengiriman Gagal');
+        return;
+    }
+
     state.studentSubmissions.unshift(submission);
     saveState();
 
@@ -1345,6 +1427,9 @@ function submitSiswaWork(type, confirmed = false) {
         if (graded) {
             graded.aiScore = Math.floor(Math.random() * 20) + 80;
             graded.aiReview = "Berdasarkan analisis algoritma AI: Langkah penyelesaian logis dan penerapan rumus Pythagoras tepat.";
+            updateSubmissionInFirestore(graded.id, { aiScore: graded.aiScore, aiReview: graded.aiReview }).catch(error => {
+                console.error('Gagal menyinkronkan analisis kiriman:', error);
+            });
             saveState();
         }
     }, 2000);
@@ -1353,14 +1438,24 @@ function submitSiswaWork(type, confirmed = false) {
     closeStudentTask(type);
 }
 
-function publishReview(submissionId) {
+async function publishReview(submissionId) {
     const sub = state.studentSubmissions.find(s => s.id === submissionId);
     if (sub) {
         const note = document.getElementById(`reviewNote_${submissionId}`)?.value;
         const finalScore = document.getElementById(`finalScore_${submissionId}`)?.value;
-        sub.teacherNote = note;
-        sub.finalScore = finalScore || sub.aiScore;
-        sub.status = 'reviewed';
+        const review = {
+            teacherNote: note,
+            finalScore: finalScore || sub.aiScore,
+            status: 'reviewed'
+        };
+        try {
+            await updateSubmissionInFirestore(submissionId, review);
+        } catch (error) {
+            console.error('Gagal menyimpan penilaian:', error);
+            customAlert('Nilai belum berhasil disimpan ke server. Periksa koneksi dan Firestore Rules.', 'Gagal Menyimpan Nilai');
+            return;
+        }
+        Object.assign(sub, review);
         saveState();
         customAlert(`Nilai untuk ${sub.nama} berhasil dipublikasikan.`, "Sukses");
         renderGuruView();
@@ -1638,7 +1733,14 @@ function editTask(type, id) {
 }
 
 function deleteSubmission(id) {
-    customConfirm('Hapus kiriman siswa ini dari daftar review?', () => {
+    customConfirm('Hapus kiriman siswa ini dari daftar review?', async () => {
+        try {
+            await deleteSubmissionFromFirestore(id);
+        } catch (error) {
+            console.error('Gagal menghapus kiriman siswa:', error);
+            customAlert('Kiriman belum berhasil dihapus dari server.', 'Gagal Menghapus');
+            return;
+        }
         state.studentSubmissions = state.studentSubmissions.filter(item => item.id !== id);
         saveState();
         renderGuruView();
@@ -1646,7 +1748,14 @@ function deleteSubmission(id) {
 }
 
 function deleteReviewedSubmission(id) {
-    customConfirm('Hapus hasil penilaian dan feedback siswa ini?', () => {
+    customConfirm('Hapus hasil penilaian dan feedback siswa ini?', async () => {
+        try {
+            await deleteSubmissionFromFirestore(id);
+        } catch (error) {
+            console.error('Gagal menghapus hasil penilaian:', error);
+            customAlert('Hasil belum berhasil dihapus dari server.', 'Gagal Menghapus');
+            return;
+        }
         state.studentSubmissions = state.studentSubmissions.filter(item => item.id !== id);
         saveState();
         renderGuruView();
