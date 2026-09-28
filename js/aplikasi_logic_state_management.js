@@ -206,9 +206,31 @@ async function loadStudentSubmissions() {
     try {
         const submissionsRef = firebaseDb.collection('submissions');
         const role = normalizeRole(state.currentUser?.role);
-        const snapshot = role === 'teacher' || role === 'admin'
-            ? await submissionsRef.get()
-            : await submissionsRef.where('studentUid', '==', firebaseAuth.currentUser.uid).get();
+        const query = role === 'teacher' || role === 'admin'
+            ? submissionsRef
+            : submissionsRef.where('studentUid', '==', firebaseAuth.currentUser.uid);
+        let snapshot = await query.get();
+
+        if (role === 'student') {
+            const email = String(state.currentUser?.email || '').trim().toLowerCase();
+            const legacySubmissions = state.studentSubmissions.filter(submission =>
+                !submission.studentUid && email && String(submission.email || '').trim().toLowerCase() === email
+            );
+            const existingIds = new Set(snapshot.docs.map(doc => doc.id));
+            for (const submission of legacySubmissions) {
+                const id = String(submission.id);
+                if (existingIds.has(id)) continue;
+                await submissionsRef.doc(id).set({
+                    ...submission,
+                    studentUid: firebaseAuth.currentUser.uid,
+                    role: 'student',
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                existingIds.add(id);
+            }
+            if (legacySubmissions.length) snapshot = await query.get();
+        }
+
         state.studentSubmissions = snapshot.docs.map(doc => {
             const numericId = Number(doc.id);
             return { ...doc.data(), id: Number.isSafeInteger(numericId) ? numericId : doc.id };
