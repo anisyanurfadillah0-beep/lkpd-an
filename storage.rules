@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function roleOfCurrentUser() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isTeacherOrAdmin() {
+      return isSignedIn() && roleOfCurrentUser() in ['teacher', 'admin'];
+    }
+
+    match /submissions/{studentUid}/{submissionId}/{fileName} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == studentUid ||
+        isTeacherOrAdmin()
+      );
+
+      allow create: if isSignedIn()
+        && request.auth.uid == studentUid
+        && roleOfCurrentUser() == 'student'
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+
+      allow update, delete: if isTeacherOrAdmin();
+    }
+  }
+}

@@ -866,7 +866,7 @@ function openStudentTask(type, id) {
 
     if (titleEl) titleEl.innerText = task.title;
     if (idEl) idEl.value = task.id;
-    activeStudentQuestion[type] = { taskId: id, index: 0, answers: task.questions.map(() => ({ answer: '', fileName: '' })) };
+    activeStudentQuestion[type] = { taskId: id, index: 0, answers: task.questions.map(() => ({ answer: '', fileName: '', file: null })) };
     startStudentTaskTimer(type, task);
     renderStudentQuestion(type, task);
 }
@@ -900,7 +900,7 @@ function renderStudentQuestion(type, task) {
     const session = activeStudentQuestion[type];
     if (!session || !task) return;
     const question = normalizeQuestion(task.questions[session.index]);
-    const draft = session.answers[session.index] || { answer: '', fileName: '' };
+    const draft = session.answers[session.index] || { answer: '', fileName: '', file: null };
     const boxEl = document.getElementById(`siswa${type}QuestionBox`);
     const answerEl = document.getElementById(`siswa${type}Jawaban`);
     const fileEl = document.getElementById(`file${type}Upload`);
@@ -937,7 +937,8 @@ function saveCurrentStudentQuestion(type) {
     const choiceEl = document.getElementById(`siswa${type}Choice`);
     session.answers[session.index] = {
         answer: choiceEl?.value || answerEl?.value.trim() || '',
-        fileName: fileEl?.files[0]?.name || session.answers[session.index]?.fileName || ''
+        fileName: fileEl?.files[0]?.name || session.answers[session.index]?.fileName || '',
+        file: fileEl?.files[0] || session.answers[session.index]?.file || null
     };
 }
 
@@ -1174,6 +1175,20 @@ function getTaskReviewMarkup(submission) {
     return `<div class="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4"><p class="text-xs font-black text-indigo-900">Soal dan pilihan</p>${questions}</div>`;
 }
 
+function getSubmissionAttachmentsMarkup(submission) {
+    const attachments = Array.isArray(submission.attachments) ? submission.attachments : [];
+    if (!attachments.length) return submission.fileName ? `<p class="text-xs text-slate-500">Lampiran lama: ${escapeHtml(submission.fileName)} (file tidak tersimpan di server)</p>` : '';
+
+    return attachments.map(attachment => {
+        const url = escapeHtml(attachment.url || '');
+        const name = escapeHtml(attachment.fileName || 'Lampiran siswa');
+        const label = `Soal ${Number(attachment.questionIndex) + 1}: ${name}`;
+        return attachment.contentType?.startsWith('image/')
+            ? `<a href="${url}" target="_blank" rel="noopener noreferrer" class="inline-block"><img src="${url}" alt="${label}" class="max-h-80 max-w-full rounded-lg border border-slate-200 object-contain"><span class="mt-1 block text-xs text-blue-700">${label}</span></a>`
+            : `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-blue-700 underline">${label} (Buka / unduh)</a>`;
+    }).join('<br>');
+}
+
 function renderGuruView() {
     const classOptions = state.classes.length
         ? state.classes.map(c => `<option value="${c.id}">${c.nama}</option>`).join('')
@@ -1294,7 +1309,7 @@ function renderGuruView() {
                 <div class="bg-white p-4 rounded-xl border border-slate-200 text-xs space-y-2">
                     <p class="font-bold text-slate-700">Jawaban Siswa:</p>
                     <p class="text-slate-600 font-mono whitespace-pre-wrap">${escapeHtml(sub.jawaban || '-')}</p>
-                    ${sub.fileName ? `<p class="text-blue-600 font-bold text-[11px] mt-2">Lampiran: ${escapeHtml(sub.fileName)}</p>` : ''}
+                    ${getSubmissionAttachmentsMarkup(sub)}
                 </div>
 
                 ${sub.cheatCount > 0 || sub.taskType === 'Evaluasi' ? `
@@ -1322,7 +1337,7 @@ function renderGuruView() {
         `).join('');
         const reviewedMarkup = reviewedSubmissions.map((sub, index) => `
             ${index === 0 || `${reviewedSubmissions[index - 1].classId}-${reviewedSubmissions[index - 1].taskType}-${reviewedSubmissions[index - 1].taskTitle}` !== `${sub.classId}-${sub.taskType}-${sub.taskTitle}` ? groupHeader(sub) : ''}
-            <div class="bg-emerald-50/60 rounded-2xl p-5 border border-emerald-100"><div class="flex flex-wrap items-start justify-between gap-3"><div><h4 class="font-extrabold text-slate-900">${escapeHtml(sub.nama)}</h4><p class="text-xs text-slate-500 mt-1">${escapeHtml(sub.email || '-')} · ${escapeHtml(sub.timestamp || '-')}</p></div><span class="text-2xl font-black text-emerald-700">${escapeHtml(sub.finalScore ?? sub.aiScore ?? '-')}</span></div><div class="mt-3 space-y-3">${getTaskReviewMarkup(sub)}<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Jawaban Siswa</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.jawaban || '-')}</p>${sub.fileName ? `<p class="text-xs text-blue-700 mt-2">Lampiran: ${escapeHtml(sub.fileName)}</p>` : ''}</div><div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Feedback Guru</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.teacherNote || 'Belum ada feedback')}</p></div></div><button onclick="deleteReviewedSubmission(${sub.id})" class="w-full mt-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold py-2.5 rounded-xl text-xs transition">Hapus Nilai & Feedback</button></div>
+            <div class="bg-emerald-50/60 rounded-2xl p-5 border border-emerald-100"><div class="flex flex-wrap items-start justify-between gap-3"><div><h4 class="font-extrabold text-slate-900">${escapeHtml(sub.nama)}</h4><p class="text-xs text-slate-500 mt-1">${escapeHtml(sub.email || '-')} · ${escapeHtml(sub.timestamp || '-')}</p></div><span class="text-2xl font-black text-emerald-700">${escapeHtml(sub.finalScore ?? sub.aiScore ?? '-')}</span></div><div class="mt-3 space-y-3">${getTaskReviewMarkup(sub)}<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Jawaban Siswa</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.jawaban || '-')}</p>${getSubmissionAttachmentsMarkup(sub)}</div><div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Feedback Guru</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.teacherNote || 'Belum ada feedback')}</p></div></div><button onclick="deleteReviewedSubmission(${sub.id})" class="w-full mt-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold py-2.5 rounded-xl text-xs transition">Hapus Nilai & Feedback</button></div>
         `).join('');
         reviewContainer.innerHTML = `<section class="space-y-4"><div class="flex items-center justify-between"><h4 class="text-base font-black text-slate-900">Perlu Dinilai <span class="text-xs text-amber-600">(${pendingSubmissions.length})</span></h4></div>${pendingMarkup || '<p class="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6">Tidak ada kiriman yang perlu dinilai pada filter ini.</p>'}</section><section class="space-y-4 pt-5 border-t border-slate-200"><div class="flex items-center justify-between"><h4 class="text-base font-black text-slate-900">Nilai & Feedback <span class="text-xs text-emerald-600">(${reviewedSubmissions.length})</span></h4></div>${reviewedMarkup || '<p class="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6">Belum ada nilai pada filter ini.</p>'}</section>`;
     }
@@ -1433,6 +1448,10 @@ async function submitSiswaWork(type, confirmed = false) {
     };
 
     try {
+        const attachments = answers
+            .map((item, index) => item.file ? { file: item.file, questionIndex: index } : null)
+            .filter(Boolean);
+        submission.attachments = await uploadStudentAttachments(attachments, submission.id);
         await saveSubmissionToFirestore(submission);
     } catch (error) {
         console.error('Gagal menyimpan kiriman siswa:', error);
@@ -1458,6 +1477,30 @@ async function submitSiswaWork(type, confirmed = false) {
 
     customAlert(`✅ Jawaban ${type} berhasil dikirimkan!\nGuru akan meninjau hasil dan memberikan nilai. Pantau tab 'Hasil & Review'.`, "Berhasil Terkirim");
     closeStudentTask(type);
+}
+
+async function uploadStudentAttachments(attachments, submissionId) {
+    if (!attachments.length) return [];
+    if (!isFirebaseReady() || !firebaseAuth.currentUser || typeof firebase.storage !== 'function') {
+        throw new Error('Firebase Storage belum tersedia.');
+    }
+
+    const storage = firebase.storage();
+    return Promise.all(attachments.map(async ({ file, questionIndex }) => {
+        if (file.size > 10 * 1024 * 1024) {
+            throw new Error(`Ukuran ${file.name} melebihi batas 10 MB.`);
+        }
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const path = `submissions/${firebaseAuth.currentUser.uid}/${submissionId}/${questionIndex}_${safeName}`;
+        const snapshot = await storage.ref(path).put(file);
+        return {
+            questionIndex,
+            fileName: file.name,
+            contentType: file.type || 'application/octet-stream',
+            storagePath: path,
+            url: await snapshot.ref.getDownloadURL()
+        };
+    }));
 }
 
 async function publishReview(submissionId) {
