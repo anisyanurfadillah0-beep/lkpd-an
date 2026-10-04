@@ -41,6 +41,28 @@ function showClassAccessCodesSyncWarning() {
     if (classAccessCodesWarningShown) return;
     classAccessCodesWarningShown = true;
     customAlert('Konten berhasil dimuat, tetapi kode kelas belum tersinkron. Pastikan aturan Firestore terbaru sudah diterapkan dengan firebase deploy --only firestore:rules.', 'Kode Kelas Belum Tersinkron');
+    const actions = document.getElementById('modalActions');
+    if (actions) {
+        actions.innerHTML = `
+            <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 text-slate-700 text-sm font-bold rounded-lg hover:bg-slate-300 transition">Nanti</button>
+            <button onclick="showFirestoreRulesTutorial()" class="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 transition">Panduan Firebase</button>
+        `;
+    }
+}
+
+function showFirestoreRulesTutorial() {
+    const modalTitle = document.getElementById('modalTitle');
+    const modalMessage = document.getElementById('modalMessage');
+    const modalActions = document.getElementById('modalActions');
+    if (!modalTitle || !modalMessage || !modalActions) return;
+
+    modalTitle.innerText = 'Aktifkan Kode Kelas di Firebase';
+    modalMessage.classList.add('whitespace-pre-line');
+    modalMessage.innerText = '1. Pastikan project Firebase yang terbuka adalah mathlearn-b766d.\n2. Buka Firestore Database, lalu pilih tab Rules.\n3. Buka file firestore.rules di folder project ini dan ganti seluruh isi editor Rules dengan isinya.\n4. Tekan Publish dan tunggu sampai aturan aktif.\n5. Kembali ke dashboard guru/admin lalu muat ulang halaman. Kode kelas akan tersinkron dan siswa dapat bergabung dengan kode tersebut.';
+    modalActions.innerHTML = `
+        <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 text-slate-700 text-sm font-bold rounded-lg hover:bg-slate-300 transition">Tutup</button>
+        <a href="https://console.firebase.google.com/project/mathlearn-b766d/firestore/databases/-default-/rules" target="_blank" rel="noopener noreferrer" class="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 transition">Buka Firebase Rules</a>
+    `;
 }
 let studentCameraStream = null;
 let studentCameraType = null;
