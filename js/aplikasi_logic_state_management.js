@@ -481,9 +481,22 @@ function removeClassNotifications(classId) {
 }
 
 function markStudentNotificationRead(notificationId) {
-    state.notifications = state.notifications.filter(notification => notification.id !== notificationId);
+    const notification = state.notifications.find(item => String(item.id) === String(notificationId));
+    if (!notification) return;
+
+    const taskType = ['Lkpd', 'Latihan', 'Evaluasi'].find(type => type === notification.contentType)
+        || ({ LKPD: 'Lkpd' })[notification.type];
+    if (taskType) {
+        switchStudentTab(taskType.toLowerCase());
+        const task = state.taskList[taskType].find(item => Number(item.id) === Number(notification.contentId));
+        if (task && isTaskOpen(task.openDate, task.closeDate)) openStudentTask(taskType, task.id);
+        return;
+    }
+
+    dismissStudentNotification(notification.id);
     saveState();
     renderSiswaView();
+    switchStudentTab('materi');
 }
 
 function changeStudentNotificationPage(direction) {
@@ -491,20 +504,24 @@ function changeStudentNotificationPage(direction) {
     renderSiswaView();
 }
 
-function toggleStudentNotifications() {
-    const panel = document.getElementById('studentNotificationPanel');
-    const button = document.getElementById('studentNotificationToggle');
-    if (!panel || !button) return;
-    const shouldOpen = panel.classList.contains('hidden');
-    panel.classList.toggle('hidden', !shouldOpen);
-    button.setAttribute('aria-expanded', String(shouldOpen));
+function getStudentNotificationDismissalKey() {
+    const identity = state.currentUser?.id || state.currentUser?.email || 'student';
+    return `mathlearn_dismissed_notifications_${encodeURIComponent(String(identity).toLowerCase())}`;
 }
 
-function closeStudentNotifications() {
-    const panel = document.getElementById('studentNotificationPanel');
-    const button = document.getElementById('studentNotificationToggle');
-    if (panel) panel.classList.add('hidden');
-    if (button) button.setAttribute('aria-expanded', 'false');
+function getDismissedStudentNotificationIds() {
+    try {
+        const ids = JSON.parse(localStorage.getItem(getStudentNotificationDismissalKey()) || '[]');
+        return new Set(Array.isArray(ids) ? ids.map(String) : []);
+    } catch (error) {
+        return new Set();
+    }
+}
+
+function dismissStudentNotification(notificationId) {
+    const dismissedIds = getDismissedStudentNotificationIds();
+    dismissedIds.add(String(notificationId));
+    localStorage.setItem(getStudentNotificationDismissalKey(), JSON.stringify([...dismissedIds].slice(-100)));
 }
 
 let pendingConfirmAction = null;
@@ -691,7 +708,7 @@ function renderDashboardForRole(expectedRole) {
 
     if (normalizeRole(expectedRole) === 'student') {
         renderSiswaView();
-        switchStudentTab(getTabFromHash('materi', ['materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
+        switchStudentTab(getTabFromHash('materi', ['notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
     }
     if (normalizeRole(expectedRole) === 'teacher') {
         ['Lkpd', 'Latihan', 'Evaluasi'].forEach(type => {
@@ -1208,18 +1225,14 @@ function renderSiswaView() {
     const isForSelectedClass = item => !item.classId || (selectedClassId > 0 && Number(item.classId) === selectedClassId);
     const notificationContainer = document.getElementById('studentNotificationList');
     if (notificationContainer) {
-        const visibleNotifications = state.notifications.filter(notification => isForSelectedClass(notification));
+        const dismissedIds = getDismissedStudentNotificationIds();
+        const visibleNotifications = state.notifications.filter(notification => isForSelectedClass(notification) && !dismissedIds.has(String(notification.id)));
         const totalPages = Math.ceil(visibleNotifications.length / studentNotificationPageSize);
         studentNotificationPage = Math.min(studentNotificationPage, Math.max(0, totalPages - 1));
         const pageStart = studentNotificationPage * studentNotificationPageSize;
         document.getElementById('studentNotificationDot')?.classList.toggle('hidden', visibleNotifications.length === 0);
-        const notificationCount = document.getElementById('studentNotificationCount');
-        if (notificationCount) {
-            notificationCount.innerText = visibleNotifications.length > 9 ? '9+' : String(visibleNotifications.length);
-            notificationCount.classList.toggle('hidden', visibleNotifications.length === 0);
-        }
         notificationContainer.innerHTML = visibleNotifications.slice(pageStart, pageStart + studentNotificationPageSize).map(notification => `
-            <button type="button" onclick="markStudentNotificationRead(${notification.id})" class="w-full text-left flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-3 hover:bg-blue-100 transition" title="Tandai sudah dilihat">
+            <button type="button" onclick="markStudentNotificationRead(${notification.id})" class="w-full text-left flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-3 hover:bg-blue-100 transition" title="Buka update">
                 <span class="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs font-black">${notification.type === 'Materi' ? 'M' : 'S'}</span>
                 <div><p class="text-sm font-bold text-slate-800">${escapeHtml(notification.type)} baru tersedia</p><p class="text-xs text-slate-600 mt-1">${escapeHtml(notification.title)} · ${escapeHtml(getClassName(notification.classId))}</p><p class="text-[10px] text-slate-500 mt-1">${new Date(notification.date).toLocaleString()}</p></div>
             </button>
@@ -1706,7 +1719,11 @@ async function submitSiswaWork(type, confirmed = false) {
     }
 
     state.studentSubmissions.unshift(submission);
+    state.notifications
+        .filter(notification => Number(notification.contentId) === Number(taskId) && notification.contentType === type)
+        .forEach(notification => dismissStudentNotification(notification.id));
     saveState();
+    renderSiswaView();
 
     // Simulate AI grading logic asynchronously
     setTimeout(() => {
@@ -2293,7 +2310,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.addEventListener('hashchange', () => {
     if (normalizeRole(state.currentUser?.role) === 'student' && window.location.pathname.endsWith('dashboard_siswa.html')) {
-        switchStudentTab(getTabFromHash('materi', ['materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
+        switchStudentTab(getTabFromHash('materi', ['notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
     }
     if (normalizeRole(state.currentUser?.role) === 'teacher' && window.location.pathname.endsWith('dashboard_guru.html')) {
         switchTeacherTab(getTabFromHash('materi', ['kelas', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));

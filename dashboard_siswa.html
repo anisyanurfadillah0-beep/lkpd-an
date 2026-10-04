@@ -89,32 +89,25 @@
             </div>
         </div>
 
-        <div class="fixed left-3 top-20 z-[100] sm:left-5">
-            <button id="studentNotificationToggle" type="button" onclick="toggleStudentNotifications()" aria-controls="studentNotificationPanel" aria-expanded="false" class="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-800 shadow-lg hover:bg-slate-50">
-                <span id="studentNotificationDot" class="hidden h-2 w-2 rounded-full bg-rose-500"></span>
-                <span>Notifikasi</span>
-                <span id="studentNotificationCount" class="hidden rounded-full bg-blue-600 px-2 py-0.5 text-[10px] text-white">0</span>
-            </button>
-            <section id="studentNotificationPanel" class="hidden mt-2 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl" aria-label="Notifikasi pembelajaran">
-                <div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                    <div>
-                        <h3 class="text-sm font-extrabold text-slate-900">Materi & Soal Terbaru</h3>
-                        <p class="mt-0.5 text-[10px] text-slate-500">Update dari guru</p>
-                    </div>
-                    <button type="button" onclick="closeStudentNotifications()" aria-label="Tutup panel notifikasi" class="flex h-8 w-8 items-center justify-center rounded-lg text-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900">&times;</button>
-                </div>
-                <div id="studentNotificationList" class="flex max-h-[min(55vh,26rem)] flex-col gap-2 overflow-y-auto p-3"></div>
-                <div id="studentNotificationPagination" class="flex items-center justify-between gap-2 border-t border-slate-200 px-3 py-3"></div>
-            </section>
-        </div>
-
         <!-- Navigation Tabs Siswa -->
         <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-4 mb-6">
+            <button onclick="switchStudentTab('notifikasi')" id="tabSiswaNotifikasi" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 flex items-center gap-2"><span class="relative inline-flex h-2 w-2"><span id="studentNotificationDot" class="hidden h-2 w-2 rounded-full bg-rose-500"></span></span>Notifikasi</button>
             <button onclick="switchStudentTab('materi')" id="tabSiswaMateri" class="tab-siswa-btn active px-5 py-2.5 rounded-xl text-xs font-bold transition bg-blue-600 text-white shadow-md">1. Bahan Materi</button>
             <button onclick="switchStudentTab('lkpd')" id="tabSiswaLkpd" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">2. LKPD</button>
             <button onclick="switchStudentTab('latihan')" id="tabSiswaLatihan" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">3. Latihan Soal</button>
             <button onclick="switchStudentTab('evaluasi')" id="tabSiswaEvaluasi" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">4. Evaluasi Akhir</button>
             <button onclick="switchStudentTab('hasil')" id="tabSiswaHasil" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 shadow-sm flex items-center gap-1">✨ Hasil & Review Guru</button>
+        </div>
+
+        <div id="subSiswaNotifikasi" class="sub-siswa-panel hidden space-y-6">
+            <section class="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <div class="mb-4">
+                    <h3 class="text-lg font-extrabold text-slate-900">Notifikasi Pembelajaran</h3>
+                    <p class="mt-1 text-xs text-slate-500">Update materi dan tugas dari guru.</p>
+                </div>
+                <div id="studentNotificationList" class="grid gap-3 md:grid-cols-2"></div>
+                <div id="studentNotificationPagination" class="mt-4 flex items-center justify-between gap-3"></div>
+            </section>
         </div>
 
         <!-- SUB-TAB 1: BAHAN MATERI -->
