@@ -107,6 +107,8 @@ state.notifications = Array.isArray(state.notifications) ? state.notifications :
 state.users.forEach(user => { user.deviceId = user.deviceId || ''; user.deviceLocked = Boolean(user.deviceLocked); });
 let activeStudentQuestion = {};
 const studentTaskTimers = {};
+const studentNotificationPageSize = 4;
+let studentNotificationPage = 0;
 
 Object.keys(state.taskList).forEach(type => {
     state.taskList[type] = state.taskList[type].map(task => ({
@@ -467,6 +469,7 @@ function addStudentNotification(type, title, classId, contentId = null, contentT
         date: new Date().toISOString()
     });
     state.notifications = state.notifications.slice(0, 50);
+    studentNotificationPage = 0;
 }
 
 function removeContentNotification(contentId, contentType) {
@@ -480,6 +483,11 @@ function removeClassNotifications(classId) {
 function markStudentNotificationRead(notificationId) {
     state.notifications = state.notifications.filter(notification => notification.id !== notificationId);
     saveState();
+    renderSiswaView();
+}
+
+function changeStudentNotificationPage(direction) {
+    studentNotificationPage += direction;
     renderSiswaView();
 }
 
@@ -1185,14 +1193,25 @@ function renderSiswaView() {
     const notificationContainer = document.getElementById('studentNotificationList');
     if (notificationContainer) {
         const visibleNotifications = state.notifications.filter(notification => isForSelectedClass(notification));
+        const totalPages = Math.ceil(visibleNotifications.length / studentNotificationPageSize);
+        studentNotificationPage = Math.min(studentNotificationPage, Math.max(0, totalPages - 1));
+        const pageStart = studentNotificationPage * studentNotificationPageSize;
         document.getElementById('studentNotificationDot')?.classList.toggle('hidden', visibleNotifications.length === 0);
-        notificationContainer.innerHTML = visibleNotifications.slice(0, 8).map(notification => `
+        notificationContainer.innerHTML = visibleNotifications.slice(pageStart, pageStart + studentNotificationPageSize).map(notification => `
             <button type="button" onclick="markStudentNotificationRead(${notification.id})" class="w-full text-left flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-3 hover:bg-blue-100 transition" title="Tandai sudah dilihat">
                 <span class="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs font-black">${notification.type === 'Materi' ? 'M' : 'S'}</span>
                 <div><p class="text-sm font-bold text-slate-800">${escapeHtml(notification.type)} baru tersedia</p><p class="text-xs text-slate-600 mt-1">${escapeHtml(notification.title)} · ${escapeHtml(getClassName(notification.classId))}</p><p class="text-[10px] text-slate-500 mt-1">${new Date(notification.date).toLocaleString()}</p></div>
             </button>
         `).join('');
         if (!visibleNotifications.length) notificationContainer.innerHTML = '<p class="text-sm text-slate-500">Belum ada materi atau soal baru.</p>';
+        const pagination = document.getElementById('studentNotificationPagination');
+        if (pagination) {
+            pagination.innerHTML = totalPages > 1 ? `
+                <button type="button" onclick="changeStudentNotificationPage(-1)" ${studentNotificationPage === 0 ? 'disabled' : ''} class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">← Sebelumnya</button>
+                <span class="text-xs font-semibold text-slate-500">Halaman ${studentNotificationPage + 1} dari ${totalPages}</span>
+                <button type="button" onclick="changeStudentNotificationPage(1)" ${studentNotificationPage >= totalPages - 1 ? 'disabled' : ''} class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">Berikutnya →</button>
+            ` : '';
+        }
     }
     // Render Materials
     const materiContainer = document.getElementById('siswaMateriContainer');
