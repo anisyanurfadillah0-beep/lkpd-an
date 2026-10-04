@@ -1409,7 +1409,12 @@ function renderSiswaView() {
     // Render Hasil Tab
     const hasilContainer = document.getElementById('siswaHasilContainer');
     if (hasilContainer && state.currentUser) {
-        const myResults = state.studentSubmissions.filter(s => s.nama === state.currentUser.nama && s.status === 'reviewed');
+        const currentStudentUid = firebaseAuth?.currentUser?.uid || (typeof state.currentUser.id === 'string' ? state.currentUser.id : '');
+        const currentStudentEmail = String(state.currentUser.email || '').trim().toLowerCase();
+        const myResults = state.studentSubmissions.filter(submission => submission.status === 'reviewed' && (
+            (currentStudentUid && submission.studentUid === currentStudentUid)
+            || (currentStudentEmail && String(submission.email || '').trim().toLowerCase() === currentStudentEmail)
+        ));
         hasilContainer.innerHTML = myResults.map(s => `
             <div class="bg-emerald-50/30 rounded-xl p-5 border border-emerald-200">
                 <div class="flex justify-between items-start mb-3">
