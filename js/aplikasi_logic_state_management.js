@@ -886,7 +886,7 @@ function openStudentTask(type, id) {
 
     if (titleEl) titleEl.innerText = task.title;
     if (idEl) idEl.value = task.id;
-    activeStudentQuestion[type] = { taskId: id, index: 0, answers: task.questions.map(() => ({ answer: '', fileName: '', file: null })) };
+    activeStudentQuestion[type] = { taskId: id, index: 0, cheatCount: 0, answers: task.questions.map(() => ({ answer: '', fileName: '', file: null })) };
     startStudentTaskTimer(type, task);
     renderStudentQuestion(type, task);
 }
@@ -1644,7 +1644,7 @@ async function submitSiswaWork(type, confirmed = false) {
         jawaban: answerText,
         fileName: fileNames.join(', '),
         timestamp: new Date().toLocaleString('id-ID'),
-        cheatCount: state.studentCheatLogs.length,
+        cheatCount: session?.cheatCount || 0,
         status: 'pending',
         aiScore: "...",
         aiReview: "Sedang diproses AI..."
@@ -2211,12 +2211,14 @@ function updateTriCalc() {
 }
 
 document.addEventListener("visibilitychange", () => {
-    const isWorkingOnQuestion = Object.keys(activeStudentQuestion).some(type => {
+    const activeType = Object.keys(activeStudentQuestion).find(type => {
         const detail = document.getElementById(`siswa${type}DetailView`);
         return detail && !detail.classList.contains('hidden');
     });
-    if (document.hidden && isWorkingOnQuestion && state.currentUser && normalizeRole(state.currentUser.role) === 'student') {
+    const activeSession = activeType ? activeStudentQuestion[activeType] : null;
+    if (document.hidden && activeSession && state.currentUser && normalizeRole(state.currentUser.role) === 'student') {
         const timestamp = new Date().toLocaleTimeString();
+        activeSession.cheatCount = (activeSession.cheatCount || 0) + 1;
         state.studentCheatLogs.push(timestamp);
         saveState();
 
@@ -2224,7 +2226,7 @@ document.addEventListener("visibilitychange", () => {
         const timeDisplay = document.getElementById('cheatTimestamp');
         const cheatModal = document.getElementById('modalAntiCheat');
 
-        if (countDisplay) countDisplay.innerText = state.studentCheatLogs.length;
+        if (countDisplay) countDisplay.innerText = activeSession.cheatCount;
         if (timeDisplay) timeDisplay.innerText = timestamp;
         if (cheatModal) cheatModal.classList.remove('hidden');
 
