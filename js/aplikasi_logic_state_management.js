@@ -1432,7 +1432,7 @@ function renderSiswaView() {
                     <p class="font-bold text-slate-700 mb-1">Jawaban Kamu:</p>
                     <p class="text-slate-600 line-clamp-2">${escapeHtml(s.jawaban || '-')}</p>
                 </div>
-                ${Array.isArray(s.questionReviews) && s.questionReviews.length ? `<div class="space-y-2"><h4 class="text-xs font-black uppercase text-slate-700">Nilai & Feedback per Soal</h4>${s.questionReviews.map((review, index) => `<div class="rounded-lg border border-slate-200 bg-white p-3 text-xs"><div class="flex items-center justify-between gap-3"><p class="font-bold text-slate-800">Soal ${index + 1}</p><p class="font-black text-emerald-700">${escapeHtml(review.score ?? '-')}</p></div><p class="mt-1 whitespace-pre-wrap text-slate-600">${escapeHtml(review.feedback || '-')}</p></div>`).join('')}</div>` : ''}
+                ${getStudentSubmissionQuestionDetails(s)}
                 <div class="bg-indigo-50 border border-indigo-100 p-3 rounded-lg text-xs">
                     <p class="font-bold text-indigo-900 mb-1">Nilai & Feedback Keseluruhan:</p>
                     <p class="whitespace-pre-wrap text-indigo-800">${escapeHtml(s.teacherNote || 'Guru tidak meninggalkan catatan spesifik.')}</p>
@@ -1447,7 +1447,7 @@ function renderSiswaView() {
 }
 
 function escapeHtml(value) {
-    return String(value || '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+    return String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
 }
 
 function insertEquationSymbol(inputId, symbol) {
@@ -1617,6 +1617,36 @@ function getTaskForSubmission(submission) {
     return (state.taskList[submission.taskType] || []).find(item => Number(item.id) === Number(submission.taskId));
 }
 
+function getStudentSubmissionQuestionDetails(submission) {
+    const task = getTaskForSubmission(submission);
+    const answers = Array.isArray(submission.questionAnswers) ? submission.questionAnswers : [];
+    const reviews = Array.isArray(submission.questionReviews) ? submission.questionReviews : [];
+    const attachments = Array.isArray(submission.attachments) ? submission.attachments : [];
+    const attachmentQuestionCount = attachments.reduce((count, attachment) => {
+        const questionIndex = Number(attachment.questionIndex);
+        return Number.isInteger(questionIndex) && questionIndex >= 0 ? Math.max(count, questionIndex + 1) : count;
+    }, 0);
+    const questionCount = Math.max(task?.questions?.length || 0, answers.length, reviews.length, attachmentQuestionCount);
+    if (!questionCount) return '';
+
+    const questionDetails = Array.from({ length: questionCount }, (_, index) => {
+        const question = normalizeQuestion(task?.questions?.[index]);
+        const answerItem = answers[index] || {};
+        const legacyAnswer = String(submission.jawaban || '').split('\n\n').find(item => item.startsWith(`Soal ${index + 1}:`));
+        let answer = answerItem.answer !== undefined && answerItem.answer !== null && answerItem.answer !== ''
+            ? String(answerItem.answer)
+            : legacyAnswer?.slice(`Soal ${index + 1}:`.length).trim() || '';
+        if (question.type === 'choice' && /^\d+$/.test(answer)) {
+            const optionIndex = Number(answer);
+            if (question.options?.[optionIndex] !== undefined) answer = `${String.fromCharCode(65 + optionIndex)}. ${question.options[optionIndex]}`;
+        }
+        const review = reviews[index] || {};
+        return `<article class="rounded-lg border border-slate-200 bg-white p-3"><div class="flex items-start justify-between gap-3"><h5 class="text-xs font-bold text-slate-800">Soal ${index + 1}${question.text ? `: ${escapeHtml(question.text)}` : ''}</h5>${review.score !== undefined ? `<span class="shrink-0 text-xs font-black text-emerald-700">${escapeHtml(review.score)}</span>` : ''}</div>${question.image ? `<img src="${escapeHtml(question.image)}" alt="Gambar soal ${index + 1}" class="mt-2 max-h-52 max-w-full rounded-lg border border-slate-200 object-contain">` : ''}<div class="mt-2 rounded-md bg-slate-50 p-2 text-xs"><p class="font-bold text-slate-600">Jawaban siswa</p><p class="mt-1 whitespace-pre-wrap text-slate-700">${escapeHtml(answer || (answerItem.fileName ? '[Lampiran Foto]' : '-'))}</p>${getSubmissionAttachmentsMarkup(submission, index)}</div>${review.feedback ? `<div class="mt-2 rounded-md bg-indigo-50 p-2 text-xs"><p class="font-bold text-indigo-900">Feedback guru</p><p class="mt-1 whitespace-pre-wrap text-indigo-800">${escapeHtml(review.feedback)}</p></div>` : ''}</article>`;
+    }).join('');
+
+    return `<details class="mb-3 rounded-lg border border-slate-200 bg-slate-50"><summary class="cursor-pointer px-3 py-2.5 text-xs font-bold text-slate-700">Lihat jawaban & feedback per nomor (${questionCount} soal)</summary><div class="space-y-2 border-t border-slate-200 p-3">${questionDetails}</div></details>`;
+}
+
 function getReviewStudentKey(submission) {
     return String(submission.studentUid || submission.email || submission.nama || submission.id);
 }
@@ -1677,7 +1707,9 @@ function getSubmissionAttachmentsMarkup(submission, questionIndex = null) {
     const allAttachments = Array.isArray(submission.attachments) ? submission.attachments : [];
     const attachments = questionIndex === null
         ? allAttachments
-        : allAttachments.filter(attachment => Number(attachment.questionIndex) === questionIndex);
+        : allAttachments.filter(attachment => Number.isInteger(Number(attachment.questionIndex))
+            ? Number(attachment.questionIndex) === questionIndex
+            : questionIndex === 0 && allAttachments.length === 1);
     if (!attachments.length) return questionIndex === null && submission.fileName ? `<p class="text-xs text-slate-500">Lampiran lama: ${escapeHtml(submission.fileName)} (file tidak tersimpan di server)</p>` : '';
 
     return attachments.map(attachment => {
