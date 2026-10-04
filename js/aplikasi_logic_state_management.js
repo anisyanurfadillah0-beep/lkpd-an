@@ -922,6 +922,7 @@ function renderStudentQuestion(type, task) {
     const fileEl = document.getElementById(`file${type}Upload`);
     const progressEl = document.getElementById(`siswa${type}QuestionProgress`);
     const labelEl = document.getElementById(`siswa${type}AnswerLabel`);
+    const previousButton = document.getElementById(`siswa${type}PreviousQuestionButton`);
 
     if (boxEl) {
         boxEl.innerHTML = `${question.text ? `<p>${escapeHtml(question.text)}</p>` : ''}${question.image ? `<img src="${question.image}" alt="Foto soal" class="max-h-80 max-w-full rounded-xl border border-slate-200 mt-3 object-contain">` : ''}${question.type === 'choice' ? `<p class="text-xs font-bold text-slate-500 mt-3">Pilih satu jawaban:</p>` : ''}`;
@@ -943,6 +944,7 @@ function renderStudentQuestion(type, task) {
     if (fileEl) fileEl.value = '';
     if (progressEl) progressEl.innerText = `Soal ${session.index + 1} dari ${task.questions.length}`;
     if (labelEl) labelEl.innerText = `Jawaban Soal ${session.index + 1}:`;
+    if (previousButton) previousButton.disabled = session.index === 0;
 }
 
 function saveCurrentStudentQuestion(type) {
@@ -952,10 +954,19 @@ function saveCurrentStudentQuestion(type) {
     const fileEl = document.getElementById(`file${type}Upload`);
     const choiceEl = document.getElementById(`siswa${type}Choice`);
     session.answers[session.index] = {
-        answer: choiceEl?.value || answerEl?.value.trim() || '',
+        answer: choiceEl ? choiceEl.value : answerEl?.value.trim() || '',
         fileName: fileEl?.files[0]?.name || session.answers[session.index]?.fileName || '',
         file: fileEl?.files[0] || session.answers[session.index]?.file || null
     };
+}
+
+function previousStudentQuestion(type) {
+    const session = activeStudentQuestion[type];
+    const task = session && state.taskList[type].find(item => item.id === session.taskId);
+    if (!session || !task || session.index === 0) return;
+    saveCurrentStudentQuestion(type);
+    session.index -= 1;
+    renderStudentQuestion(type, task);
 }
 
 function nextStudentQuestion(type) {
