@@ -1417,17 +1417,18 @@ function renderSiswaView() {
                         <p class="text-[10px] text-slate-500">Dikumpulkan: ${s.timestamp}</p>
                     </div>
                     <div class="text-right">
-                        <span class="text-2xl font-black text-emerald-600">${s.finalScore || s.aiScore}</span>
+                        <span class="text-2xl font-black text-emerald-600">${escapeHtml(s.finalScore ?? s.aiScore ?? '-')}</span>
                         <span class="block text-[9px] font-bold text-slate-500">NILAI AKHIR</span>
                     </div>
                 </div>
                 <div class="bg-white p-3 rounded-lg border border-slate-200 mb-3 text-xs">
                     <p class="font-bold text-slate-700 mb-1">Jawaban Kamu:</p>
-                    <p class="text-slate-600 line-clamp-2">${s.jawaban}</p>
+                    <p class="text-slate-600 line-clamp-2">${escapeHtml(s.jawaban || '-')}</p>
                 </div>
+                ${Array.isArray(s.questionReviews) && s.questionReviews.length ? `<div class="space-y-2"><h4 class="text-xs font-black uppercase text-slate-700">Nilai & Feedback per Soal</h4>${s.questionReviews.map((review, index) => `<div class="rounded-lg border border-slate-200 bg-white p-3 text-xs"><div class="flex items-center justify-between gap-3"><p class="font-bold text-slate-800">Soal ${index + 1}</p><p class="font-black text-emerald-700">${escapeHtml(review.score ?? '-')}</p></div><p class="mt-1 whitespace-pre-wrap text-slate-600">${escapeHtml(review.feedback || '-')}</p></div>`).join('')}</div>` : ''}
                 <div class="bg-indigo-50 border border-indigo-100 p-3 rounded-lg text-xs">
-                    <p class="font-bold text-indigo-900 mb-1">Catatan & Feedback Guru:</p>
-                    <p class="text-indigo-800">${s.teacherNote || 'Guru tidak meninggalkan catatan spesifik. Kerja bagus!'}</p>
+                    <p class="font-bold text-indigo-900 mb-1">Nilai & Feedback Keseluruhan:</p>
+                    <p class="whitespace-pre-wrap text-indigo-800">${escapeHtml(s.teacherNote || 'Guru tidak meninggalkan catatan spesifik.')}</p>
                 </div>
             </div>
         `).join('');
@@ -1605,24 +1606,46 @@ function handleStudentClassSelectionChange() {
 function adminSaveMaterial(e) { e.preventDefault(); const c = state.classes.find(item => item.id === Number(document.getElementById('adminMaterialClass').value)); if (!c) return; const material = { id: Date.now(), judul: document.getElementById('adminMaterialTitle').value, deskripsi: document.getElementById('adminMaterialDescription').value, link: document.getElementById('adminMaterialLink').value, classId: c.id }; c.materi = c.materi || []; c.materi.unshift(material); state.materiList.unshift({ id: material.id, judul: material.judul, deskripsi: material.deskripsi, yt: '', file: material.link, classId: c.id }); addStudentNotification('Materi', material.judul, c.id, material.id, 'Materi'); saveState(); renderAdminView(); }
 function adminSendEmail(e) { e.preventDefault(); const target = document.getElementById('adminEmailTarget'); const subject = document.getElementById('adminEmailSubject').value; const message = document.getElementById('adminEmailMessage').value; state.emailLogs.push({ date: new Date().toISOString(), target: target.value === 'all' ? 'Semua pengguna' : state.users.find(u => u.id === Number(target.value))?.email, subject, message }); addStudentNotification('Pengumuman', subject, null); saveState(); customAlert('Broadcast tercatat untuk penerima yang dipilih.', 'Email Berhasil'); renderAdminView(); }
 
+function getTaskForSubmission(submission) {
+    return (state.taskList[submission.taskType] || []).find(item => Number(item.id) === Number(submission.taskId));
+}
+
 function getTaskReviewMarkup(submission) {
-    const task = (state.taskList[submission.taskType] || []).find(item => Number(item.id) === Number(submission.taskId));
+    const task = getTaskForSubmission(submission);
     if (!task || !Array.isArray(task.questions) || task.questions.length === 0) return '';
 
     const questions = task.questions.map((rawQuestion, index) => {
         const question = normalizeQuestion(rawQuestion);
+        const answer = submission.questionAnswers?.[index]?.answer;
+        const legacyAnswer = String(submission.jawaban || '').split('\n\n').find(item => item.startsWith(`Soal ${index + 1}:`));
+        let answerText = answer !== undefined && answer !== null && answer !== ''
+            ? String(answer)
+            : legacyAnswer?.slice(`Soal ${index + 1}:`.length).trim() || '';
+        if (question.type === 'choice' && answerText !== '' && /^\d+$/.test(answerText)) {
+            const optionIndex = Number(answerText);
+            answerText = question.options?.[optionIndex] !== undefined
+                ? `${String.fromCharCode(65 + optionIndex)}. ${question.options[optionIndex]}`
+                : answerText;
+        }
         const options = question.type === 'choice'
             ? `<ol class="mt-2 list-inside list-[upper-alpha] space-y-1 text-slate-700">${(question.options || []).map((option, optionIndex) => `<li>${escapeHtml(option)}${String(question.correctAnswer) === String(optionIndex) ? ' <strong class="text-emerald-700">(Kunci)</strong>' : ''}</li>`).join('')}</ol>`
             : '';
-        return `<div class="rounded-xl border border-slate-200 bg-white p-3"><p class="text-[10px] font-black uppercase text-slate-500">Soal ${index + 1}</p>${question.text ? `<p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">${escapeHtml(question.text)}</p>` : ''}${question.image ? `<img src="${escapeHtml(question.image)}" alt="Foto soal ${index + 1}" class="mt-3 max-h-72 max-w-full rounded-lg border border-slate-200 object-contain">` : ''}${options}</div>`;
+        const review = submission.questionReviews?.[index] || {};
+        const gradeFields = submission.status === 'pending'
+            ? `<div class="mt-3 grid gap-3 sm:grid-cols-[10rem_1fr]"><label class="text-xs font-bold text-slate-700">Nilai soal ${index + 1}<input id="questionScore_${submission.id}_${index}" type="number" min="0" max="100" step="0.5" value="${escapeHtml(review.score ?? '')}" class="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0-100"></label><label class="text-xs font-bold text-slate-700">Feedback soal ${index + 1}<textarea id="questionFeedback_${submission.id}_${index}" rows="2" class="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Tulis masukan untuk soal ini...">${escapeHtml(review.feedback || '')}</textarea></label></div>`
+            : `<div class="mt-3 rounded-lg bg-emerald-50 p-3 text-xs"><p class="font-bold text-emerald-900">Nilai soal: ${escapeHtml(review.score ?? '-')}</p><p class="mt-1 whitespace-pre-wrap text-emerald-800">${escapeHtml(review.feedback || 'Tidak ada feedback per soal.')}</p></div>`;
+        return `<div class="rounded-xl border border-slate-200 bg-white p-3"><p class="text-[10px] font-black uppercase text-slate-500">Soal ${index + 1}</p>${question.text ? `<p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">${escapeHtml(question.text)}</p>` : ''}${question.image ? `<img src="${escapeHtml(question.image)}" alt="Foto soal ${index + 1}" class="mt-3 max-h-72 max-w-full rounded-lg border border-slate-200 object-contain">` : ''}${options}<div class="mt-3 rounded-lg bg-slate-50 p-3 text-xs"><p class="font-bold text-slate-700">Jawaban siswa</p><p class="mt-1 whitespace-pre-wrap text-slate-600">${escapeHtml(answerText || (submission.questionAnswers?.[index]?.fileName ? '[Lampiran Foto]' : '-'))}</p>${getSubmissionAttachmentsMarkup(submission, index)}</div>${gradeFields}</div>`;
     }).join('');
 
     return `<div class="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4"><p class="text-xs font-black text-indigo-900">Soal dan pilihan</p>${questions}</div>`;
 }
 
-function getSubmissionAttachmentsMarkup(submission) {
-    const attachments = Array.isArray(submission.attachments) ? submission.attachments : [];
-    if (!attachments.length) return submission.fileName ? `<p class="text-xs text-slate-500">Lampiran lama: ${escapeHtml(submission.fileName)} (file tidak tersimpan di server)</p>` : '';
+function getSubmissionAttachmentsMarkup(submission, questionIndex = null) {
+    const allAttachments = Array.isArray(submission.attachments) ? submission.attachments : [];
+    const attachments = questionIndex === null
+        ? allAttachments
+        : allAttachments.filter(attachment => Number(attachment.questionIndex) === questionIndex);
+    if (!attachments.length) return questionIndex === null && submission.fileName ? `<p class="text-xs text-slate-500">Lampiran lama: ${escapeHtml(submission.fileName)} (file tidak tersimpan di server)</p>` : '';
 
     return attachments.map(attachment => {
         const url = escapeHtml(attachment.url || '');
@@ -1780,12 +1803,7 @@ function renderGuruView() {
                 </div>
 
                 ${getTaskReviewMarkup(sub)}
-
-                <div class="bg-white p-4 rounded-xl border border-slate-200 text-xs space-y-2">
-                    <p class="font-bold text-slate-700">Jawaban Siswa:</p>
-                    <p class="text-slate-600 font-mono whitespace-pre-wrap">${escapeHtml(sub.jawaban || '-')}</p>
-                    ${getSubmissionAttachmentsMarkup(sub)}
-                </div>
+                ${getTaskForSubmission(sub)?.questions?.length ? '' : `<div class="bg-white p-4 rounded-xl border border-slate-200 text-xs"><p class="font-bold text-slate-700">Jawaban Siswa:</p><p class="mt-1 whitespace-pre-wrap text-slate-600">${escapeHtml(sub.jawaban || '-')}</p>${getSubmissionAttachmentsMarkup(sub)}</div>`}
 
                 ${sub.cheatCount > 0 || sub.taskType === 'Evaluasi' ? `
                 <div class="${sub.cheatCount > 0 ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'} p-3 rounded-xl border text-xs font-semibold">
@@ -1812,7 +1830,7 @@ function renderGuruView() {
         `).join('');
         const reviewedMarkup = reviewedSubmissions.map((sub, index) => `
             ${index === 0 || `${reviewedSubmissions[index - 1].classId}-${reviewedSubmissions[index - 1].taskType}-${reviewedSubmissions[index - 1].taskTitle}` !== `${sub.classId}-${sub.taskType}-${sub.taskTitle}` ? groupHeader(sub) : ''}
-            <div class="bg-emerald-50/60 rounded-2xl p-5 border border-emerald-100"><div class="flex flex-wrap items-start justify-between gap-3"><div><h4 class="font-extrabold text-slate-900">${escapeHtml(sub.nama)}</h4><p class="text-xs text-slate-500 mt-1">${escapeHtml(sub.email || '-')} · ${escapeHtml(sub.timestamp || '-')}</p></div><span class="text-2xl font-black text-emerald-700">${escapeHtml(sub.finalScore ?? sub.aiScore ?? '-')}</span></div><div class="mt-3 space-y-3">${getTaskReviewMarkup(sub)}<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Jawaban Siswa</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.jawaban || '-')}</p>${getSubmissionAttachmentsMarkup(sub)}</div><div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Feedback Guru</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.teacherNote || 'Belum ada feedback')}</p></div></div><button onclick="deleteReviewedSubmission(${sub.id})" class="w-full mt-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold py-2.5 rounded-xl text-xs transition">Hapus Nilai & Feedback</button></div>
+            <div class="bg-emerald-50/60 rounded-2xl p-5 border border-emerald-100"><div class="flex flex-wrap items-start justify-between gap-3"><div><h4 class="font-extrabold text-slate-900">${escapeHtml(sub.nama)}</h4><p class="text-xs text-slate-500 mt-1">${escapeHtml(sub.email || '-')} · ${escapeHtml(sub.timestamp || '-')}</p></div><span class="text-2xl font-black text-emerald-700">${escapeHtml(sub.finalScore ?? sub.aiScore ?? '-')}</span></div><div class="mt-3 space-y-3">${getTaskReviewMarkup(sub)}${getTaskForSubmission(sub)?.questions?.length ? '' : `<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Jawaban Siswa</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.jawaban || '-')}</p>${getSubmissionAttachmentsMarkup(sub)}</div>`}<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Nilai & Feedback Keseluruhan</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.teacherNote || 'Belum ada feedback')}</p></div></div><button onclick="deleteReviewedSubmission(${sub.id})" class="w-full mt-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold py-2.5 rounded-xl text-xs transition">Hapus Nilai & Feedback</button></div>
         `).join('');
         reviewContainer.innerHTML = `<section class="space-y-4"><div class="flex items-center justify-between"><h4 class="text-base font-black text-slate-900">Perlu Dinilai <span class="text-xs text-amber-600">(${pendingSubmissions.length})</span></h4></div>${pendingMarkup || '<p class="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6">Tidak ada kiriman yang perlu dinilai pada filter ini.</p>'}</section><section class="space-y-4 pt-5 border-t border-slate-200"><div class="flex items-center justify-between"><h4 class="text-base font-black text-slate-900">Nilai & Feedback <span class="text-xs text-emerald-600">(${reviewedSubmissions.length})</span></h4></div>${reviewedMarkup || '<p class="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6">Belum ada nilai pada filter ini.</p>'}</section>`;
     }
@@ -1923,6 +1941,7 @@ async function submitSiswaWork(type, confirmed = false) {
         email: state.currentUser ? state.currentUser.email : '-',
         classId: taskObj ? taskObj.classId : null,
         jawaban: answerText,
+        questionAnswers: answers.map(item => ({ answer: item.answer, fileName: item.fileName })),
         fileName: fileNames.join(', '),
         timestamp: new Date().toLocaleString('id-ID'),
         cheatCount: session?.cheatCount || 0,
@@ -2016,10 +2035,36 @@ async function publishReview(submissionId) {
     const sub = state.studentSubmissions.find(s => s.id === submissionId);
     if (sub) {
         const note = document.getElementById(`reviewNote_${submissionId}`)?.value;
-        const finalScore = document.getElementById(`finalScore_${submissionId}`)?.value;
+        const finalScore = document.getElementById(`finalScore_${submissionId}`)?.value.trim();
+        const task = getTaskForSubmission(sub);
+        const questionReviews = (task?.questions || []).map((question, index) => ({
+            questionIndex: index,
+            score: document.getElementById(`questionScore_${submissionId}_${index}`)?.value.trim() || '',
+            feedback: document.getElementById(`questionFeedback_${submissionId}_${index}`)?.value.trim() || ''
+        }));
+        const missingQuestionReview = questionReviews.findIndex(review => (
+            review.score === ''
+            || !Number.isFinite(Number(review.score))
+            || Number(review.score) < 0
+            || Number(review.score) > 100
+            || !review.feedback
+        ));
+        if (missingQuestionReview !== -1) {
+            customAlert(`Lengkapi nilai (0-100) dan feedback untuk soal ${missingQuestionReview + 1}.`, 'Review Belum Lengkap');
+            return;
+        }
+        if (!finalScore || !Number.isFinite(Number(finalScore)) || Number(finalScore) < 0 || Number(finalScore) > 100) {
+            customAlert('Masukkan nilai keseluruhan antara 0 sampai 100.', 'Nilai Akhir Belum Valid');
+            return;
+        }
+        if (!note?.trim()) {
+            customAlert('Tulis feedback keseluruhan untuk siswa sebelum memublikasikan nilai.', 'Feedback Belum Diisi');
+            return;
+        }
         const review = {
-            teacherNote: note,
-            finalScore: finalScore || sub.aiScore,
+            questionReviews,
+            teacherNote: note.trim(),
+            finalScore: Number(finalScore),
             status: 'reviewed'
         };
         try {
