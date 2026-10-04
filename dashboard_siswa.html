@@ -34,6 +34,21 @@
         </div>
     </div>
 
+    <div id="studentCameraModal" class="fixed inset-0 bg-slate-950/90 z-[180] hidden items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="studentCameraTitle">
+        <div class="bg-white w-full max-w-2xl rounded-2xl p-5 shadow-2xl">
+            <div class="flex items-center justify-between gap-4 mb-4">
+                <h2 id="studentCameraTitle" class="text-lg font-extrabold text-slate-900">Ambil Foto Jawaban</h2>
+                <button type="button" onclick="closeStudentCamera()" class="text-slate-500 hover:text-slate-900 text-2xl leading-none" aria-label="Tutup kamera">&times;</button>
+            </div>
+            <video id="studentCameraVideo" class="w-full aspect-video max-h-[60vh] rounded-xl bg-slate-950 object-contain" autoplay muted playsinline></video>
+            <p id="studentCameraMessage" class="mt-3 text-sm text-rose-700" role="status"></p>
+            <div class="mt-4 flex justify-end gap-3">
+                <button type="button" onclick="closeStudentCamera()" class="px-4 py-2.5 rounded-lg bg-slate-100 text-slate-700 text-sm font-bold hover:bg-slate-200">Batal</button>
+                <button type="button" onclick="captureStudentCamera()" class="px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">Ambil Foto</button>
+            </div>
+        </div>
+    </div>
+
     <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50 border-b border-slate-800">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3 cursor-pointer" onclick="window.location.assign('./halaman_login_registrasi.html')">
@@ -140,7 +155,7 @@
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">Unggah Foto (Opsional):</label>
-                        <input type="file" id="fileLkpdUpload" accept="image/*" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                        <div class="flex flex-wrap items-center gap-3"><input type="file" id="fileLkpdUpload" accept="image/*" capture="environment" class="min-w-0 flex-1 block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"><button type="button" onclick="openStudentCamera('Lkpd')" class="shrink-0 rounded-lg bg-blue-100 px-4 py-2.5 text-xs font-bold text-blue-800 hover:bg-blue-200">Ambil Foto</button></div>
                     </div>
                     <div class="flex flex-wrap gap-3">
                         <button id="siswaLkpdPreviousQuestionButton" onclick="previousStudentQuestion('Lkpd')" disabled class="bg-slate-200 text-slate-500 font-bold px-6 py-3 rounded-xl text-xs transition disabled:cursor-not-allowed">Sebelumnya</button>
@@ -180,7 +195,7 @@
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">Unggah Foto Coretan (Opsional):</label>
-                        <input type="file" id="fileLatihanUpload" accept="image/*" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100">
+                        <div class="flex flex-wrap items-center gap-3"><input type="file" id="fileLatihanUpload" accept="image/*" capture="environment" class="min-w-0 flex-1 block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"><button type="button" onclick="openStudentCamera('Latihan')" class="shrink-0 rounded-lg bg-emerald-100 px-4 py-2.5 text-xs font-bold text-emerald-800 hover:bg-emerald-200">Ambil Foto</button></div>
                     </div>
                     <div class="flex flex-wrap gap-3">
                         <button id="siswaLatihanPreviousQuestionButton" onclick="previousStudentQuestion('Latihan')" disabled class="bg-slate-200 text-slate-500 font-bold px-6 py-3 rounded-xl text-xs transition disabled:cursor-not-allowed">Sebelumnya</button>
@@ -223,7 +238,7 @@
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">Unggah Foto Lembar Jawaban:</label>
-                        <input type="file" id="fileEvaluasiUpload" accept="image/*" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100">
+                        <div class="flex flex-wrap items-center gap-3"><input type="file" id="fileEvaluasiUpload" accept="image/*" capture="environment" class="min-w-0 flex-1 block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100"><button type="button" onclick="openStudentCamera('Evaluasi')" class="shrink-0 rounded-lg bg-rose-100 px-4 py-2.5 text-xs font-bold text-rose-800 hover:bg-rose-200">Ambil Foto</button></div>
                     </div>
                     <div class="flex flex-wrap gap-3">
                         <button id="siswaEvaluasiPreviousQuestionButton" onclick="previousStudentQuestion('Evaluasi')" disabled class="bg-slate-200 text-slate-500 font-bold px-6 py-3 rounded-xl text-xs transition disabled:cursor-not-allowed">Sebelumnya</button>

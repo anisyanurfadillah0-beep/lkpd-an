@@ -34,6 +34,10 @@ let firebaseReady = false;
 let firebaseAuth = null;
 let firebaseDb = null;
 let submissionsUnsubscribe = null;
+let studentCameraStream = null;
+let studentCameraType = null;
+let teacherQuestionCameraStream = null;
+let teacherQuestionCameraInput = null;
 
 function initializeFirebaseClient() {
     if (!window.firebase || !window.firebase.apps) {
@@ -986,6 +990,177 @@ function nextStudentQuestion(type) {
     customAlert('Ini adalah soal terakhir. Periksa jawaban, lalu kirimkan tugas.');
 }
 
+async function openStudentCamera(type) {
+    if (!activeStudentQuestion[type]) return;
+    const modal = document.getElementById('studentCameraModal');
+    const video = document.getElementById('studentCameraVideo');
+    const message = document.getElementById('studentCameraMessage');
+    if (!modal || !video || !message) return;
+
+    closeStudentCamera();
+    studentCameraType = type;
+    message.innerText = '';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        message.innerText = 'Kamera web memerlukan koneksi aman HTTPS atau localhost. Buka situs melalui alamat HTTPS.';
+        return;
+    }
+
+    try {
+        try {
+            studentCameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        } catch (error) {
+            studentCameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        video.srcObject = studentCameraStream;
+        await video.play();
+    } catch (error) {
+        closeStudentCamera();
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        message.innerText = error.name === 'NotAllowedError'
+            ? 'Izin kamera ditolak. Izinkan akses kamera melalui pengaturan izin situs di browser.'
+            : error.name === 'NotFoundError'
+                ? 'Kamera tidak ditemukan pada perangkat ini.'
+                : error.name === 'NotReadableError'
+                    ? 'Kamera sedang digunakan aplikasi lain. Tutup aplikasi tersebut lalu coba lagi.'
+                    : 'Kamera gagal dibuka. Periksa izin kamera dan pastikan kamera tidak sedang digunakan aplikasi lain.';
+    }
+}
+
+async function captureStudentCamera() {
+    const video = document.getElementById('studentCameraVideo');
+    const message = document.getElementById('studentCameraMessage');
+    const type = studentCameraType;
+    if (!video || !studentCameraStream || !type || !video.videoWidth || !video.videoHeight) {
+        if (message) message.innerText = 'Tunggu sampai pratinjau kamera tampil, lalu ambil foto.';
+        return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!blob) {
+        if (message) message.innerText = 'Foto gagal diproses. Coba ambil foto sekali lagi.';
+        return;
+    }
+
+    const file = new File([blob], `foto-${type.toLowerCase()}-${Date.now()}.jpg`, { type: 'image/jpeg' });
+    const fileInput = document.getElementById(`file${type}Upload`);
+    const session = activeStudentQuestion[type];
+    if (!session) {
+        closeStudentCamera();
+        return;
+    }
+    session.answers[session.index] = { ...session.answers[session.index], fileName: file.name, file };
+    if (fileInput) {
+        try {
+            const transfer = new DataTransfer();
+            transfer.items.add(file);
+            fileInput.files = transfer.files;
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch {}
+    }
+    closeStudentCamera();
+}
+
+function closeStudentCamera() {
+    if (studentCameraStream) studentCameraStream.getTracks().forEach(track => track.stop());
+    studentCameraStream = null;
+    studentCameraType = null;
+    const video = document.getElementById('studentCameraVideo');
+    if (video) video.srcObject = null;
+    const modal = document.getElementById('studentCameraModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+
+async function openTeacherQuestionCamera(type, input) {
+    const modal = document.getElementById('teacherCameraModal');
+    const video = document.getElementById('teacherCameraVideo');
+    const message = document.getElementById('teacherCameraMessage');
+    if (!modal || !video || !message || !input) return;
+
+    closeTeacherQuestionCamera();
+    teacherQuestionCameraInput = input;
+    message.innerText = '';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        message.innerText = 'Kamera web memerlukan koneksi aman HTTPS atau localhost. Buka situs melalui alamat HTTPS.';
+        return;
+    }
+
+    try {
+        try {
+            teacherQuestionCameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        } catch (error) {
+            teacherQuestionCameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        video.srcObject = teacherQuestionCameraStream;
+        await video.play();
+    } catch (error) {
+        closeTeacherQuestionCamera();
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        message.innerText = error.name === 'NotAllowedError'
+            ? 'Izin kamera ditolak. Izinkan akses kamera melalui pengaturan izin situs di browser.'
+            : error.name === 'NotFoundError'
+                ? 'Kamera tidak ditemukan pada perangkat ini.'
+                : error.name === 'NotReadableError'
+                    ? 'Kamera sedang digunakan aplikasi lain. Tutup aplikasi tersebut lalu coba lagi.'
+                    : 'Kamera gagal dibuka. Periksa izin kamera dan pastikan kamera tidak sedang digunakan aplikasi lain.';
+    }
+}
+
+async function captureTeacherQuestionCamera() {
+    const video = document.getElementById('teacherCameraVideo');
+    const message = document.getElementById('teacherCameraMessage');
+    if (!video || !teacherQuestionCameraStream || !teacherQuestionCameraInput || !video.videoWidth || !video.videoHeight) {
+        if (message) message.innerText = 'Tunggu sampai pratinjau kamera tampil, lalu ambil foto.';
+        return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!blob) {
+        if (message) message.innerText = 'Foto gagal diproses. Coba ambil foto sekali lagi.';
+        return;
+    }
+
+    try {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([blob], `foto-soal-${Date.now()}.jpg`, { type: 'image/jpeg' }));
+        teacherQuestionCameraInput.files = transfer.files;
+        teacherQuestionCameraInput.dispatchEvent(new Event('change', { bubbles: true }));
+        closeTeacherQuestionCamera();
+    } catch (error) {
+        if (message) message.innerText = 'Browser tidak mendukung pemasangan foto otomatis. Gunakan pemilih file pada form soal.';
+    }
+}
+
+function closeTeacherQuestionCamera() {
+    if (teacherQuestionCameraStream) teacherQuestionCameraStream.getTracks().forEach(track => track.stop());
+    teacherQuestionCameraStream = null;
+    teacherQuestionCameraInput = null;
+    const video = document.getElementById('teacherCameraVideo');
+    if (video) video.srcObject = null;
+    const modal = document.getElementById('teacherCameraModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+
 function closeStudentTask(type) {
     const list = document.getElementById(`siswa${type}ListView`);
     const detail = document.getElementById(`siswa${type}DetailView`);
@@ -1031,7 +1206,7 @@ function renderSiswaView() {
                 </div>
                 <div class="flex items-center gap-2 pt-2 border-t border-slate-200">
                     ${m.yt ? `<a href="${m.yt}" target="_blank" class="text-[11px] bg-red-100 text-red-700 font-bold px-3 py-1.5 rounded-lg hover:bg-red-200 transition">▶ Youtube</a>` : ''}
-                    ${m.file ? `<a href="${m.file}" target="_blank" class="text-[11px] bg-blue-100 text-blue-700 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-200 transition">📄 Dokumen</a>` : ''}
+                    ${m.file ? `<a href="${escapeHtml(m.file)}" ${m.file.startsWith('data:') ? `download="${escapeHtml(m.fileName || 'materi')}"` : 'target="_blank" rel="noopener noreferrer"'} class="text-[11px] bg-blue-100 text-blue-700 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-200 transition">${m.fileName ? 'Unduh File Materi' : '📄 Dokumen'}</a>` : ''}
                 </div>
             </div>
         `).join('');
@@ -1247,6 +1422,7 @@ function renderGuruView() {
                     <h4 class="font-bold text-sm text-slate-800">${m.judul}</h4>
                     <p class="text-[10px] text-indigo-600 font-bold mt-0.5">Kelas: ${getClassName(m.classId)}</p>
                     <p class="text-[10px] text-slate-500 mt-0.5">${m.deskripsi.substring(0, 60)}...</p>
+                    ${m.file ? `<a href="${escapeHtml(m.file)}" ${m.file.startsWith('data:') ? `download="${escapeHtml(m.fileName || 'materi')}"` : 'target="_blank" rel="noopener noreferrer"'} class="inline-block mt-2 text-[10px] font-bold text-blue-700 hover:underline">${m.fileName ? `File: ${escapeHtml(m.fileName)}` : 'Buka Dokumen'}</a>` : ''}
                 </div>
                     <div class="flex gap-2">
                         <button onclick="editMateri(${m.id})" class="text-[11px] bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold px-3 py-1.5 rounded-lg transition">Edit</button>
@@ -1690,19 +1866,50 @@ async function addMateriByGuru(e) {
     e.preventDefault();
     const form = e.target;
     const editingId = Number(form.dataset.editingId || 0);
+    const uploadedFile = document.getElementById('guruMateriUpload').files[0];
+    if (uploadedFile && uploadedFile.size > 400 * 1024) {
+        customAlert('File materi melebihi batas 400 KB. Pilih file yang lebih kecil.', 'File Terlalu Besar');
+        return;
+    }
+    let uploadedFileUrl = '';
+    if (uploadedFile) {
+        try {
+            uploadedFileUrl = await readAnyFileAsDataUrl(uploadedFile);
+        } catch (error) {
+            customAlert('File materi gagal dibaca. Pilih file lain lalu coba lagi.', 'Upload Gagal');
+            return;
+        }
+    }
+    const linkedFile = document.getElementById('guruMateriLinkFile').value;
+    const materialFile = uploadedFileUrl || linkedFile || form.dataset.existingUploadedFile || '';
+    const materialFileName = uploadedFile?.name || (materialFile === form.dataset.existingUploadedFile ? form.dataset.existingUploadedFileName || '' : '');
     const newM = {
         id: editingId || Date.now(),
         judul: document.getElementById('guruMateriJudul').value,
         deskripsi: document.getElementById('guruMateriDeskripsi').value,
         yt: document.getElementById('guruMateriLinkYt').value,
-        file: document.getElementById('guruMateriLinkFile').value
-        , classId: Number(document.getElementById('guruMateriClass').value)
+        file: materialFile,
+        fileName: materialFileName,
+        classId: Number(document.getElementById('guruMateriClass').value)
     };
+    const nextMateriList = editingId
+        ? state.materiList.map(item => item.id === editingId ? newM : item)
+        : [newM, ...state.materiList];
+    const projectedContent = {
+        classes: state.classes,
+        materiList: nextMateriList,
+        taskList: state.taskList,
+        notifications: state.notifications
+    };
+    if (new Blob([JSON.stringify(projectedContent)]).size > 900 * 1024) {
+        customAlert('File tidak dapat ditambahkan karena total data pembelajaran akan melebihi batas penyimpanan. Gunakan file yang lebih kecil atau hapus file lama.', 'Penyimpanan Penuh');
+        return;
+    }
     if (editingId) {
-        state.materiList = state.materiList.map(item => item.id === editingId ? newM : item);
+        state.materiList = nextMateriList;
         delete form.dataset.editingId;
     } else {
-        state.materiList.unshift(newM);
+        state.materiList = nextMateriList;
         addStudentNotification('Materi', newM.judul, newM.classId, newM.id, 'Materi');
     }
     const syncResult = await saveLearningContent();
@@ -1710,6 +1917,8 @@ async function addMateriByGuru(e) {
         customAlert(syncResult ? 'Materi tersimpan dan tersinkron ke Firestore.' : 'Materi tersimpan di perangkat ini saja karena Firebase belum aktif.', 'Materi Tersimpan');
     }
     e.target.reset();
+    delete form.dataset.existingUploadedFile;
+    delete form.dataset.existingUploadedFileName;
     renderGuruView();
 }
 
@@ -1720,9 +1929,12 @@ function editMateri(id) {
     document.getElementById('guruMateriJudul').value = materi.judul;
     document.getElementById('guruMateriDeskripsi').value = materi.deskripsi;
     document.getElementById('guruMateriLinkYt').value = materi.yt || '';
-    document.getElementById('guruMateriLinkFile').value = materi.file || '';
+    const isUploadedFile = materi.file?.startsWith('data:');
+    document.getElementById('guruMateriLinkFile').value = isUploadedFile ? '' : materi.file || '';
     document.getElementById('guruMateriClass').value = materi.classId || state.classes[0]?.id || '';
     form.dataset.editingId = id;
+    form.dataset.existingUploadedFile = isUploadedFile ? materi.file : '';
+    form.dataset.existingUploadedFileName = isUploadedFile ? materi.fileName || '' : '';
     switchTeacherTab('materi');
 }
 
@@ -1895,7 +2107,7 @@ function addQuestionField(type, value = '') {
         </select>
         <textarea id="${textInputId}" rows="3" class="question-text w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Tulis pertanyaan ke-${questionNumber}...">${escapeHtml(question.text)}</textarea>
         <button type="button" onclick="showEquationKeyboard('${textInputId}')" class="equation-key px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold">Tambah simbol persamaan</button>
-        <div class="question-image-wrap"><label class="block text-xs font-bold text-slate-700 mb-1">Foto soal (opsional, bisa digabung dengan teks atau pilihan ganda):</label><input type="file" accept="image/*" class="question-image block w-full text-sm text-slate-500"></div>
+        <div class="question-image-wrap"><label class="block text-xs font-bold text-slate-700 mb-1">Foto soal (opsional, bisa digabung dengan teks atau pilihan ganda):</label><div class="flex flex-wrap items-center gap-3"><input type="file" accept="image/*" capture="environment" class="question-image min-w-0 flex-1 block w-full text-sm text-slate-500"><button type="button" onclick="openTeacherQuestionCamera('${type}', this.closest('.question-editor').querySelector('.question-image'))" class="shrink-0 rounded-lg bg-indigo-100 px-4 py-2.5 text-xs font-bold text-indigo-800 hover:bg-indigo-200">Ambil Foto</button></div></div>
         <div class="question-choice-wrap space-y-2"><label class="block text-xs font-bold text-slate-700">Opsi jawaban:</label>${[0, 1, 2, 3].map(index => { const optionId = `questionOption_${editorId}_${index}`; return `<div><div class="flex gap-2"><input id="${optionId}" class="question-option min-w-0 flex-1 p-2.5 rounded-lg border border-slate-300 text-sm" value="${escapeHtml(question.options[index] || '')}" placeholder="Opsi ${String.fromCharCode(65 + index)}"><button type="button" onclick="showEquationKeyboard('${optionId}')" class="equation-key px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold" aria-label="Tambah simbol pada opsi ${String.fromCharCode(65 + index)}">∑</button></div></div>`; }).join('')}<label class="block text-xs font-bold text-slate-700">Jawaban benar:</label><select class="question-correct w-full p-2.5 rounded-lg border border-slate-300 text-sm"><option value="">Pilih jawaban benar</option>${[0, 1, 2, 3].map(index => `<option value="${index}" ${String(question.correctAnswer) === String(index) ? 'selected' : ''}>Opsi ${String.fromCharCode(65 + index)}</option>`).join('')}</select></div>
     `;
     container.appendChild(field);
@@ -1933,6 +2145,15 @@ function readFileAsDataUrl(file) {
             };
             image.src = reader.result;
         };
+        reader.readAsDataURL(file);
+    });
+}
+
+function readAnyFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = reject;
+        reader.onload = () => resolve(reader.result);
         reader.readAsDataURL(file);
     });
 }
