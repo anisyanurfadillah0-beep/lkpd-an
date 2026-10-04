@@ -80,26 +80,37 @@
                     <h2 class="text-2xl md:text-4xl font-black mt-2">Teorema Pythagoras & Aplikasi</h2>
                     <p class="text-blue-200 text-sm mt-1 max-w-xl">Akses materi, kerjakan tugas sesuai pertemuan, dan lihat hasil evaluasi secara terstruktur.</p>
                 </div>
-                <div class="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/10 min-w-[220px]">
-                    <label for="studentClassSelector" class="block text-[10px] text-blue-100 uppercase font-bold mb-2">Masuk ke Kelas</label>
-                    <select id="studentClassSelector" onchange="handleStudentClassSelectionChange()" class="w-full bg-white text-slate-800 p-2.5 rounded-xl text-xs font-bold outline-none">
-                        <option value="">Pilih kelas</option>
-                    </select>
-                    <input id="studentClassCode" type="text" maxlength="13" autocomplete="off" autocapitalize="characters" placeholder="Kode dari guru/admin" class="mt-2 w-full rounded-xl bg-white p-2.5 text-xs font-bold uppercase text-slate-800 outline-none placeholder:normal-case placeholder:font-medium">
-                    <button type="button" onclick="selectStudentClass()" class="mt-2 w-full rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-blue-700">Masuk ke Kelas</button>
-                    <p id="studentClassMessage" class="mt-2 hidden text-[10px] font-semibold text-amber-200" role="status"></p>
+                <div id="heroClassEntryTarget" class="flex w-full justify-end md:w-auto">
+                    <div id="studentClassEntry" class="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/10 min-w-[220px]">
+                        <label for="studentClassSelector" class="block text-[10px] text-blue-100 uppercase font-bold mb-2">Masuk ke Kelas</label>
+                        <select id="studentClassSelector" onchange="handleStudentClassSelectionChange()" class="w-full bg-white text-slate-800 p-2.5 rounded-xl text-xs font-bold outline-none">
+                            <option value="">Pilih kelas</option>
+                        </select>
+                        <input id="studentClassCode" type="text" maxlength="13" autocomplete="off" autocapitalize="characters" placeholder="Kode dari guru/admin" class="mt-2 w-full rounded-xl bg-white p-2.5 text-xs font-bold uppercase text-slate-800 outline-none placeholder:normal-case placeholder:font-medium">
+                        <button type="button" onclick="selectStudentClass()" class="mt-2 w-full rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-blue-700">Masuk ke Kelas</button>
+                        <p id="studentClassMessage" class="mt-2 hidden text-[10px] font-semibold text-amber-200" role="status"></p>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Navigation Tabs Siswa -->
         <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-4 mb-6">
+            <button onclick="switchStudentTab('kelas')" id="tabSiswaKelas" class="tab-siswa-btn hidden px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">Kelas</button>
             <button onclick="switchStudentTab('notifikasi')" id="tabSiswaNotifikasi" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 flex items-center gap-2"><span class="relative inline-flex h-2 w-2"><span id="studentNotificationDot" class="hidden h-2 w-2 rounded-full bg-rose-500"></span></span>Notifikasi</button>
             <button onclick="switchStudentTab('materi')" id="tabSiswaMateri" class="tab-siswa-btn active px-5 py-2.5 rounded-xl text-xs font-bold transition bg-blue-600 text-white shadow-md">1. Bahan Materi</button>
             <button onclick="switchStudentTab('lkpd')" id="tabSiswaLkpd" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">2. LKPD</button>
             <button onclick="switchStudentTab('latihan')" id="tabSiswaLatihan" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">3. Latihan Soal</button>
             <button onclick="switchStudentTab('evaluasi')" id="tabSiswaEvaluasi" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">4. Evaluasi Akhir</button>
             <button onclick="switchStudentTab('hasil')" id="tabSiswaHasil" class="tab-siswa-btn px-5 py-2.5 rounded-xl text-xs font-bold transition bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50 shadow-sm flex items-center gap-1">✨ Hasil & Review Guru</button>
+        </div>
+
+        <div id="subSiswaKelas" class="sub-siswa-panel hidden space-y-6">
+            <section class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+                <h3 class="text-lg font-extrabold text-slate-900">Kelas Saya</h3>
+                <p class="mt-1 mb-4 text-xs text-slate-500">Pilih kelas lain dengan kode yang dibagikan guru atau admin.</p>
+                <div id="studentClassEntryTarget" class="max-w-sm"></div>
+            </section>
         </div>
 
         <div id="subSiswaNotifikasi" class="sub-siswa-panel hidden space-y-6">

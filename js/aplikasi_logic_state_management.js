@@ -739,7 +739,7 @@ function renderDashboardForRole(expectedRole) {
 
     if (normalizeRole(expectedRole) === 'student') {
         renderSiswaView();
-        switchStudentTab(getTabFromHash('materi', ['notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
+        switchStudentTab(getTabFromHash('materi', ['kelas', 'notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
     }
     if (normalizeRole(expectedRole) === 'teacher') {
         ['Lkpd', 'Latihan', 'Evaluasi'].forEach(type => {
@@ -909,6 +909,7 @@ function switchAdminPanel(panelKey) {
 }
 
 function switchStudentTab(tabName) {
+    if (tabName === 'kelas' && !Number(state.currentUser?.classId)) tabName = 'materi';
     state.activeTab = tabName;
     if (window.location.hash !== `#${tabName}`) window.location.hash = tabName;
     document.querySelectorAll('.tab-siswa-btn').forEach(btn => {
@@ -917,6 +918,7 @@ function switchStudentTab(tabName) {
         else defaultClass += "text-slate-600 border-slate-200 hover:bg-slate-50";
         btn.className = defaultClass;
     });
+    document.getElementById('tabSiswaKelas')?.classList.toggle('hidden', !state.classes.some(item => Number(item.id) === Number(state.currentUser?.classId)));
     document.querySelectorAll('.sub-siswa-panel').forEach(p => p.classList.add('hidden'));
 
     const activeBtn = document.getElementById(`tabSiswa${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`);
@@ -1262,6 +1264,20 @@ function renderSiswaView() {
         classSelector.value = currentStudent?.classId || state.currentUser?.classId || '';
     }
     const selectedClassId = Number(currentStudent?.classId || state.currentUser?.classId || 0);
+    const hasJoinedClass = state.classes.some(item => Number(item.id) === selectedClassId);
+    const classEntry = document.getElementById('studentClassEntry');
+    const heroClassEntryTarget = document.getElementById('heroClassEntryTarget');
+    const classEntryTarget = document.getElementById('studentClassEntryTarget');
+    if (classEntry && heroClassEntryTarget && classEntryTarget) {
+        if (hasJoinedClass) {
+            classEntry.className = 'w-full rounded-xl border border-slate-200 bg-slate-50 p-4';
+            classEntryTarget.appendChild(classEntry);
+        } else {
+            classEntry.className = 'min-w-[220px] rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-md';
+            heroClassEntryTarget.appendChild(classEntry);
+        }
+    }
+    document.getElementById('tabSiswaKelas')?.classList.toggle('hidden', !hasJoinedClass);
     const isForSelectedClass = item => !item.classId || (selectedClassId > 0 && Number(item.classId) === selectedClassId);
     const notificationContainer = document.getElementById('studentNotificationList');
     if (notificationContainer) {
@@ -2437,7 +2453,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.addEventListener('hashchange', () => {
     if (normalizeRole(state.currentUser?.role) === 'student' && window.location.pathname.endsWith('dashboard_siswa.html')) {
-        switchStudentTab(getTabFromHash('materi', ['notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
+        switchStudentTab(getTabFromHash('materi', ['kelas', 'notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
     }
     if (normalizeRole(state.currentUser?.role) === 'teacher' && window.location.pathname.endsWith('dashboard_guru.html')) {
         switchTeacherTab(getTabFromHash('materi', ['kelas', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
