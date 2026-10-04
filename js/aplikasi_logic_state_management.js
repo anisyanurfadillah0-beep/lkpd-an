@@ -34,6 +34,14 @@ let firebaseReady = false;
 let firebaseAuth = null;
 let firebaseDb = null;
 let submissionsUnsubscribe = null;
+let classAccessCodesSyncAvailable = true;
+let classAccessCodesWarningShown = false;
+
+function showClassAccessCodesSyncWarning() {
+    if (classAccessCodesWarningShown) return;
+    classAccessCodesWarningShown = true;
+    customAlert('Konten berhasil dimuat, tetapi kode kelas belum tersinkron. Pastikan aturan Firestore terbaru sudah diterapkan dengan firebase deploy --only firestore:rules.', 'Kode Kelas Belum Tersinkron');
+}
 let studentCameraStream = null;
 let studentCameraType = null;
 let teacherQuestionCameraStream = null;
@@ -173,9 +181,17 @@ async function saveLearningContent() {
 
     try {
         if (['teacher', 'admin'].includes(normalizeRole(state.currentUser?.role))) {
-            await Promise.all(state.classes.filter(item => item.accessCode).map(item => (
-                firebaseDb.collection('classAccessCodes').doc(String(item.id)).set({ accessCode: item.accessCode })
-            )));
+            try {
+                await Promise.all(state.classes.filter(item => item.accessCode).map(item => (
+                    firebaseDb.collection('classAccessCodes').doc(String(item.id)).set({ accessCode: item.accessCode })
+                )));
+                classAccessCodesSyncAvailable = true;
+                classAccessCodesWarningShown = false;
+            } catch (error) {
+                classAccessCodesSyncAvailable = false;
+                console.error('Kode kelas belum dapat disinkronkan:', error);
+                showClassAccessCodesSyncWarning();
+            }
         }
         await firebaseDb.collection('appData').doc('learningContent').set(content, { merge: true });
         return true;
@@ -188,6 +204,7 @@ async function saveLearningContent() {
 
 async function loadLearningContent() {
     if (!isFirebaseReady() || !firebaseAuth.currentUser) return false;
+    const localClassCodes = new Map(state.classes.filter(item => item.accessCode).map(item => [String(item.id), item.accessCode]));
 
     try {
         const snapshot = await firebaseDb.collection('appData').doc('learningContent').get();
@@ -215,32 +232,50 @@ async function loadLearningContent() {
         }
         const role = normalizeRole(state.currentUser?.role);
         if (role === 'teacher' || role === 'admin') {
-            const codeSnapshot = await firebaseDb.collection('classAccessCodes').get();
-            const savedCodes = new Map(codeSnapshot.docs.map(doc => [doc.id, doc.data().accessCode]));
-            let needsCodeWrite = false;
+            let savedCodes = new Map();
+            try {
+                const codeSnapshot = await firebaseDb.collection('classAccessCodes').get();
+                savedCodes = new Map(codeSnapshot.docs.map(doc => [doc.id, doc.data().accessCode]));
+                classAccessCodesSyncAvailable = true;
+            } catch (error) {
+                classAccessCodesSyncAvailable = false;
+                console.error('Kode kelas belum dapat dimuat:', error);
+            }
+            const missingCodeClasses = [];
             state.classes.forEach(classItem => {
                 const savedCode = savedCodes.get(String(classItem.id));
                 if (savedCode) classItem.accessCode = savedCode;
                 else {
-                    classItem.accessCode = classItem.accessCode || generateClassAccessCode();
-                    needsCodeWrite = true;
+                    classItem.accessCode = localClassCodes.get(String(classItem.id)) || classItem.accessCode || generateClassAccessCode();
+                    missingCodeClasses.push(classItem);
                 }
             });
-            if (needsCodeWrite) {
-                await Promise.all(state.classes.map(classItem => (
-                    firebaseDb.collection('classAccessCodes').doc(String(classItem.id)).set({ accessCode: classItem.accessCode })
-                )));
+            if (classAccessCodesSyncAvailable && missingCodeClasses.length) {
+                try {
+                    await Promise.all(missingCodeClasses.map(classItem => (
+                        firebaseDb.collection('classAccessCodes').doc(String(classItem.id)).set({ accessCode: classItem.accessCode })
+                    )));
+                } catch (error) {
+                    classAccessCodesSyncAvailable = false;
+                    console.error('Kode kelas belum dapat disimpan:', error);
+                }
             }
             if (content.classes?.some(classItem => Object.prototype.hasOwnProperty.call(classItem, 'accessCode'))) {
-                await firebaseDb.collection('appData').doc('learningContent').set({
-                    classes: state.classes.map(({ accessCode, ...classData }) => classData)
-                }, { merge: true });
+                try {
+                    await firebaseDb.collection('appData').doc('learningContent').set({
+                        classes: state.classes.map(({ accessCode, ...classData }) => classData)
+                    }, { merge: true });
+                } catch (error) {
+                    classAccessCodesSyncAvailable = false;
+                    console.error('Kode kelas lama belum dapat dipindahkan ke penyimpanan privat:', error);
+                }
             }
         } else {
             state.classes.forEach(classItem => { delete classItem.accessCode; });
         }
         migrateLegacyDefaultClassContent();
         saveState();
+        if ((role === 'teacher' || role === 'admin') && !classAccessCodesSyncAvailable) showClassAccessCodesSyncWarning();
         return true;
     } catch (error) {
         console.error('Gagal memuat konten dari Firestore:', error);
