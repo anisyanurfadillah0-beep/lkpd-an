@@ -819,6 +819,7 @@ function renderAdminView() {
     const navs = Array.from(document.querySelectorAll('.admin-nav'));
 
     if (!panelTitle || !panelContent) return;
+    ensureClassAccessCodes();
     const selected = location.hash?.replace('#', '') || 'dashboard';
     const titles = { dashboard: 'Ringkasan Pengelolaan Sistem', konten: 'Konten Web, Kelas & Materi', email: 'Pengumuman Pengguna', akun: 'Akun Firebase', backup: 'Backup & Data Sistem' };
     panelTitle.innerText = titles[selected] || titles.dashboard;
@@ -842,7 +843,7 @@ function adminPanelMarkup(panel) {
     if (panel === 'konten') return `<div class='grid lg:grid-cols-2 gap-5'>
         <form onsubmit='adminSaveClass(event)' class='bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3'><h4 class='font-black'>Tambah / Edit Kelas</h4><input id='adminClassName' required class='${input}' placeholder='Nama kelas'><textarea id='adminClassDescription' class='${input}' rows='2' placeholder='Deskripsi kelas'></textarea><button class='bg-slate-900 text-white font-bold px-4 py-2 rounded-xl text-xs'>Simpan Kelas</button></form>
         <form onsubmit='adminSaveMaterial(event)' class='bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3'><h4 class='font-black'>Tambah Materi ke Kelas</h4><select id='adminMaterialClass' required class='${input}'>${state.classes.map(c => `<option value='${c.id}'>${c.nama}</option>`).join('')}</select><input id='adminMaterialTitle' required class='${input}' placeholder='Judul materi'><textarea id='adminMaterialDescription' required class='${input}' rows='2' placeholder='Deskripsi materi'></textarea><input id='adminMaterialLink' class='${input}' placeholder='Link dokumen / video (opsional)'><button class='bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs'>Simpan Materi</button></form>
-        <div class='lg:col-span-2 space-y-3'><h4 class='font-black'>Kelas dan Materi</h4>${state.classes.map(c => `<div class='border border-slate-200 rounded-2xl p-4'><div class='flex justify-between gap-3'><div><b>${c.nama}</b><p class='text-xs text-slate-500 mt-1'>${c.deskripsi || 'Tanpa deskripsi'}</p></div><button onclick='adminDeleteClass(${c.id})' class='text-rose-600 text-xs font-bold'>Hapus Kelas</button></div><div class='mt-3 space-y-2'>${(c.materi || []).map(m => `<div class='flex justify-between items-center bg-slate-50 rounded-xl p-3 text-sm'><span>${m.judul}</span><button onclick='adminDeleteMaterial(${c.id}, ${m.id})' class='text-rose-600 text-xs font-bold'>Hapus</button></div>`).join('') || `<p class='text-xs text-slate-500'>Belum ada materi.</p>`}</div></div>`).join('')}</div></div>`;
+        <div class='lg:col-span-2 space-y-3'><h4 class='font-black'>Kelas dan Materi</h4>${state.classes.map(c => `<div class='border border-slate-200 rounded-2xl p-4'><div class='flex justify-between gap-3'><div><b>${escapeHtml(c.nama)}</b><p class='text-xs text-slate-500 mt-1'>${escapeHtml(c.deskripsi || 'Tanpa deskripsi')}</p><p class='mt-2 text-xs font-bold text-blue-700'>Kode masuk siswa: <code class='rounded bg-blue-50 px-2 py-1 font-mono'>${escapeHtml(c.accessCode)}</code></p></div><button onclick='adminDeleteClass(${c.id})' class='text-rose-600 text-xs font-bold'>Hapus Kelas</button></div><div class='mt-3 space-y-2'>${(c.materi || []).map(m => `<div class='flex justify-between items-center bg-slate-50 rounded-xl p-3 text-sm'><span>${escapeHtml(m.judul)}</span><button onclick='adminDeleteMaterial(${c.id}, ${m.id})' class='text-rose-600 text-xs font-bold'>Hapus</button></div>`).join('') || `<p class='text-xs text-slate-500'>Belum ada materi.</p>`}</div></div>`).join('')}</div></div>`;
     if (panel === 'akun') return `<div class='space-y-4'>
         <div class='rounded-2xl border border-blue-200 bg-blue-50 p-4'><h4 class='font-black text-blue-900'>Akun dikelola oleh Firebase</h4><p class='mt-2 text-sm text-blue-800'>Panel ini tidak membuat kata sandi, token, atau akun lokal. Firebase Authentication menyimpan kredensial; Firestore menyimpan profil dan role.</p></div>
         <div class='grid gap-3 md:grid-cols-2'>
@@ -857,7 +858,7 @@ function adminPanelMarkup(panel) {
     return `<div class='grid md:grid-cols-2 gap-4'><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.classes.length} Kelas</b><p class='text-sm text-slate-600 mt-2'>Kelas dapat dibuat dan dihapus dari tab Konten Web.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>Akun Firebase</b><p class='text-sm text-slate-600 mt-2'>Siswa mendaftar langsung; akun guru dan admin dibuat melalui Firebase Authentication dan Firestore.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.materiList.length + state.classes.reduce((n, c) => n + (c.materi || []).length, 0)} Materi</b><p class='text-sm text-slate-600 mt-2'>Gunakan tab Konten Web untuk mengelola materi per kelas.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.emailLogs.length} Pengumuman</b><p class='text-sm text-slate-600 mt-2'>Gunakan tab Email Pengguna untuk mengelola catatan pengumuman.</p></div></div>`;
 }
 
-async function adminSaveClass(e) { e.preventDefault(); state.classes.unshift({ id: Date.now(), nama: document.getElementById('adminClassName').value, deskripsi: document.getElementById('adminClassDescription').value, materi: [] }); await saveLearningContent(); renderAdminView(); }
+async function adminSaveClass(e) { e.preventDefault(); state.classes.unshift({ id: Date.now(), nama: document.getElementById('adminClassName').value, deskripsi: document.getElementById('adminClassDescription').value, accessCode: generateClassAccessCode(), materi: [] }); await saveLearningContent(); renderAdminView(); }
 function adminDeleteClass(id) { customConfirm('Hapus kelas beserta materi di dalamnya?', async () => { state.classes = state.classes.filter(c => c.id !== id); state.materiList = state.materiList.filter(m => m.classId !== id); removeClassNotifications(id); await saveLearningContent(); renderAdminView(); }); }
 async function adminSaveMaterial(e) { e.preventDefault(); const c = state.classes.find(item => item.id === Number(document.getElementById('adminMaterialClass').value)); if (!c) return; const material = { id: Date.now(), judul: document.getElementById('adminMaterialTitle').value, deskripsi: document.getElementById('adminMaterialDescription').value, link: document.getElementById('adminMaterialLink').value, classId: c.id }; c.materi = c.materi || []; c.materi.unshift(material); state.materiList.unshift({ id: material.id, judul: material.judul, deskripsi: material.deskripsi, yt: '', file: material.link, classId: c.id }); addStudentNotification('Materi', material.judul, c.id, material.id, 'Materi'); await saveLearningContent(); renderAdminView(); }
 async function adminDeleteMaterial(classId, materialId) { const currentClass = state.classes.find(c => c.id === classId); if (!currentClass) return; currentClass.materi = currentClass.materi.filter(m => m.id !== materialId); state.materiList = state.materiList.filter(m => m.id !== materialId); removeContentNotification(materialId, 'Materi'); await saveLearningContent(); renderAdminView(); }
@@ -1391,16 +1392,54 @@ function getClassName(classId) {
     return state.classes.find(item => item.id === Number(classId))?.nama || 'Belum dipilih';
 }
 
+function generateClassAccessCode() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code;
+    do {
+        const values = new Uint8Array(8);
+        if (window.crypto?.getRandomValues) window.crypto.getRandomValues(values);
+        else values.forEach((value, index) => { values[index] = Math.floor(Math.random() * 256) + index; });
+        const characters = Array.from(values, value => alphabet[value % alphabet.length]).join('');
+        code = `KLS-${characters.slice(0, 4)}-${characters.slice(4)}`;
+    } while (state.classes.some(item => item.accessCode === code));
+    return code;
+}
+
+function ensureClassAccessCodes() {
+    let changed = false;
+    state.classes.forEach(item => {
+        if (!item.accessCode) {
+            item.accessCode = generateClassAccessCode();
+            changed = true;
+        }
+    });
+    if (changed) saveLearningContent().catch(error => console.error('Gagal menyimpan kode kelas:', error));
+}
+
 function getCurrentStudentUser() {
     return state.users.find(user => user.id === state.currentUser?.id || user.email === state.currentUser?.email);
 }
 
 async function selectStudentClass(classId) {
     const student = getCurrentStudentUser();
-    const selectedClass = state.classes.find(item => Number(item.id) === Number(classId));
+    const selector = document.getElementById('studentClassSelector');
+    const codeInput = document.getElementById('studentClassCode');
+    const selectedClass = state.classes.find(item => Number(item.id) === Number(selector?.value));
     if (normalizeRole(state.currentUser?.role) !== 'student' || !selectedClass) return;
+    const alreadyJoined = Number(student?.classId || state.currentUser?.classId) === Number(selectedClass.id);
+    const submittedCode = String(codeInput?.value || '').trim().toUpperCase();
+    if (!alreadyJoined && (!selectedClass.accessCode || submittedCode !== selectedClass.accessCode.toUpperCase())) {
+        const message = document.getElementById('studentClassMessage');
+        if (message) {
+            message.innerText = selectedClass.accessCode ? 'Kode kelas salah. Minta kode yang benar kepada guru atau admin.' : 'Kode kelas belum dibuat. Minta guru atau admin membuka Manajemen Kelas.';
+            message.classList.remove('hidden');
+        }
+        return;
+    }
     if (student) student.classId = Number(selectedClass.id);
     state.currentUser.classId = Number(selectedClass.id);
+    if (codeInput) codeInput.value = '';
+    clearStudentClassMessage();
     saveState();
     renderSiswaView();
     if (isFirebaseReady() && firebaseAuth.currentUser?.uid === state.currentUser.id) {
@@ -1411,6 +1450,20 @@ async function selectStudentClass(classId) {
             customAlert('Kelas dipilih pada perangkat ini, tetapi gagal disimpan ke akun. Periksa koneksi lalu pilih kelas kembali.', 'Gagal Menyimpan Kelas');
         }
     }
+}
+
+function clearStudentClassMessage() {
+    const message = document.getElementById('studentClassMessage');
+    if (message) {
+        message.innerText = '';
+        message.classList.add('hidden');
+    }
+}
+
+function handleStudentClassSelectionChange() {
+    const codeInput = document.getElementById('studentClassCode');
+    if (codeInput) codeInput.value = '';
+    clearStudentClassMessage();
 }
 function adminSaveMaterial(e) { e.preventDefault(); const c = state.classes.find(item => item.id === Number(document.getElementById('adminMaterialClass').value)); if (!c) return; const material = { id: Date.now(), judul: document.getElementById('adminMaterialTitle').value, deskripsi: document.getElementById('adminMaterialDescription').value, link: document.getElementById('adminMaterialLink').value, classId: c.id }; c.materi = c.materi || []; c.materi.unshift(material); state.materiList.unshift({ id: material.id, judul: material.judul, deskripsi: material.deskripsi, yt: '', file: material.link, classId: c.id }); addStudentNotification('Materi', material.judul, c.id, material.id, 'Materi'); saveState(); renderAdminView(); }
 function adminSendEmail(e) { e.preventDefault(); const target = document.getElementById('adminEmailTarget'); const subject = document.getElementById('adminEmailSubject').value; const message = document.getElementById('adminEmailMessage').value; state.emailLogs.push({ date: new Date().toISOString(), target: target.value === 'all' ? 'Semua pengguna' : state.users.find(u => u.id === Number(target.value))?.email, subject, message }); addStudentNotification('Pengumuman', subject, null); saveState(); customAlert('Broadcast tercatat untuk penerima yang dipilih.', 'Email Berhasil'); renderAdminView(); }
@@ -1445,6 +1498,7 @@ function getSubmissionAttachmentsMarkup(submission) {
 }
 
 function renderGuruView() {
+    ensureClassAccessCodes();
     const classOptions = state.classes.length
         ? state.classes.map(c => `<option value="${c.id}">${c.nama}</option>`).join('')
         : '<option value="">Buat kelas terlebih dahulu</option>';
@@ -1459,7 +1513,7 @@ function renderGuruView() {
     if (classList) {
         classList.innerHTML = state.classes.map(c => `
             <div class="flex items-center justify-between gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div><h4 class="font-bold text-sm text-slate-800">${c.nama}</h4><p class="text-[10px] text-slate-500 mt-1">${c.deskripsi || 'Tanpa deskripsi'}</p></div>
+                <div><h4 class="font-bold text-sm text-slate-800">${escapeHtml(c.nama)}</h4><p class="text-[10px] text-slate-500 mt-1">${escapeHtml(c.deskripsi || 'Tanpa deskripsi')}</p><p class="mt-2 text-xs font-bold text-indigo-700">Kode masuk siswa: <code class="rounded bg-indigo-50 px-2 py-1 font-mono">${escapeHtml(c.accessCode)}</code></p></div>
                 <div class="flex gap-2"><button onclick="editClassByGuru(${c.id})" class="text-[11px] bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-bold px-3 py-1.5 rounded-lg transition">Edit</button><button onclick="deleteClassByGuru(${c.id})" class="text-[11px] bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold px-3 py-1.5 rounded-lg transition">Hapus</button></div>
             </div>
         `).join('');
@@ -1610,7 +1664,7 @@ async function saveClassByGuru(e) {
         if (currentClass) { currentClass.nama = name; currentClass.deskripsi = description; }
         delete form.dataset.editingId;
     } else {
-        state.classes.unshift({ id: Date.now(), nama: name, deskripsi: description, materi: [] });
+        state.classes.unshift({ id: Date.now(), nama: name, deskripsi: description, accessCode: generateClassAccessCode(), materi: [] });
     }
     await saveLearningContent();
     form.reset();

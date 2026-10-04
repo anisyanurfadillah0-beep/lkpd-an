@@ -82,9 +82,12 @@
                 </div>
                 <div class="bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/10 min-w-[220px]">
                     <label for="studentClassSelector" class="block text-[10px] text-blue-100 uppercase font-bold mb-2">Masuk ke Kelas</label>
-                    <select id="studentClassSelector" onchange="selectStudentClass(this.value)" class="w-full bg-white text-slate-800 p-2.5 rounded-xl text-xs font-bold outline-none">
+                    <select id="studentClassSelector" onchange="handleStudentClassSelectionChange()" class="w-full bg-white text-slate-800 p-2.5 rounded-xl text-xs font-bold outline-none">
                         <option value="">Pilih kelas</option>
                     </select>
+                    <input id="studentClassCode" type="text" maxlength="13" autocomplete="off" autocapitalize="characters" placeholder="Kode dari guru/admin" class="mt-2 w-full rounded-xl bg-white p-2.5 text-xs font-bold uppercase text-slate-800 outline-none placeholder:normal-case placeholder:font-medium">
+                    <button type="button" onclick="selectStudentClass()" class="mt-2 w-full rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-blue-700">Masuk ke Kelas</button>
+                    <p id="studentClassMessage" class="mt-2 hidden text-[10px] font-semibold text-amber-200" role="status"></p>
                 </div>
             </div>
         </div>
