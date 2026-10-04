@@ -1663,6 +1663,15 @@ async function submitSiswaWork(type, confirmed = false) {
         return;
     }
     const answers = session ? session.answers : [];
+    if (type === 'Lkpd' && session) {
+        const firstUnansweredIndex = answers.findIndex(item => !item.answer && !item.fileName);
+        if (firstUnansweredIndex !== -1) {
+            session.index = firstUnansweredIndex;
+            renderStudentQuestion(type, taskObj);
+            customAlert(`Soal ${firstUnansweredIndex + 1} belum dijawab. Lengkapi soal secara berurutan sebelum mengirim LKPD.`);
+            return;
+        }
+    }
     const hasAnswer = answers.some(item => item.answer || item.fileName);
 
     if (!hasAnswer) {
