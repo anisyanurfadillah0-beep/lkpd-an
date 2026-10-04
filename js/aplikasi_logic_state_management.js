@@ -1629,9 +1629,37 @@ function getSubmissionAttachmentsMarkup(submission) {
         const name = escapeHtml(attachment.fileName || 'Lampiran siswa');
         const label = `Soal ${Number(attachment.questionIndex) + 1}: ${name}`;
         return attachment.contentType?.startsWith('image/')
-            ? `<a href="${url}" target="_blank" rel="noopener noreferrer" class="inline-block"><img src="${url}" alt="${label}" class="max-h-80 max-w-full rounded-lg border border-slate-200 object-contain"><span class="mt-1 block text-xs text-blue-700">${label}</span></a>`
+            ? `<a href="${url}" data-file-name="${name}" target="_blank" rel="noopener noreferrer" onclick="openSubmissionAttachment(event, this)" class="inline-block"><img src="${url}" alt="${label}" class="max-h-80 max-w-full rounded-lg border border-slate-200 object-contain"><span class="mt-1 block text-xs text-blue-700">${label} (Klik untuk membuka)</span></a>`
             : `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-blue-700 underline">${label} (Buka / unduh)</a>`;
     }).join('<br>');
+}
+
+function openSubmissionAttachment(event, link) {
+    const source = link.getAttribute('href') || '';
+    if (!source.startsWith('data:')) return;
+    event.preventDefault();
+
+    try {
+        const [metadata, encodedData] = source.split(',', 2);
+        const contentType = metadata.match(/^data:([^;]+)/)?.[1] || 'application/octet-stream';
+        const binaryData = atob(encodedData);
+        const bytes = new Uint8Array(binaryData.length);
+        for (let index = 0; index < binaryData.length; index += 1) bytes[index] = binaryData.charCodeAt(index);
+        const attachmentUrl = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+        const openedWindow = window.open(attachmentUrl, '_blank');
+
+        if (openedWindow) openedWindow.opener = null;
+        else {
+            const downloadLink = document.createElement('a');
+            downloadLink.href = attachmentUrl;
+            downloadLink.download = link.dataset.fileName || 'lampiran-siswa.jpg';
+            downloadLink.click();
+        }
+        window.setTimeout(() => URL.revokeObjectURL(attachmentUrl), 60000);
+    } catch (error) {
+        console.error('Gagal membuka lampiran siswa:', error);
+        customAlert('Foto tidak dapat dibuka. Coba unduh preview dengan klik kanan atau muat ulang kiriman.', 'Lampiran Gagal Dibuka');
+    }
 }
 
 function renderGuruView() {
