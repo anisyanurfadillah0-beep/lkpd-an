@@ -491,6 +491,22 @@ function changeStudentNotificationPage(direction) {
     renderSiswaView();
 }
 
+function toggleStudentNotifications() {
+    const panel = document.getElementById('studentNotificationPanel');
+    const button = document.getElementById('studentNotificationToggle');
+    if (!panel || !button) return;
+    const shouldOpen = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', !shouldOpen);
+    button.setAttribute('aria-expanded', String(shouldOpen));
+}
+
+function closeStudentNotifications() {
+    const panel = document.getElementById('studentNotificationPanel');
+    const button = document.getElementById('studentNotificationToggle');
+    if (panel) panel.classList.add('hidden');
+    if (button) button.setAttribute('aria-expanded', 'false');
+}
+
 let pendingConfirmAction = null;
 
 function customAlert(message, title = "Pemberitahuan") {
@@ -1197,6 +1213,11 @@ function renderSiswaView() {
         studentNotificationPage = Math.min(studentNotificationPage, Math.max(0, totalPages - 1));
         const pageStart = studentNotificationPage * studentNotificationPageSize;
         document.getElementById('studentNotificationDot')?.classList.toggle('hidden', visibleNotifications.length === 0);
+        const notificationCount = document.getElementById('studentNotificationCount');
+        if (notificationCount) {
+            notificationCount.innerText = visibleNotifications.length > 9 ? '9+' : String(visibleNotifications.length);
+            notificationCount.classList.toggle('hidden', visibleNotifications.length === 0);
+        }
         notificationContainer.innerHTML = visibleNotifications.slice(pageStart, pageStart + studentNotificationPageSize).map(notification => `
             <button type="button" onclick="markStudentNotificationRead(${notification.id})" class="w-full text-left flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-3 hover:bg-blue-100 transition" title="Tandai sudah dilihat">
                 <span class="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs font-black">${notification.type === 'Materi' ? 'M' : 'S'}</span>
