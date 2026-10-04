@@ -139,6 +139,7 @@ let activeStudentQuestion = {};
 const studentTaskTimers = {};
 const studentNotificationPageSize = 4;
 let studentNotificationPage = 0;
+let selectedReviewStudentKey = null;
 
 Object.keys(state.taskList).forEach(type => {
     state.taskList[type] = state.taskList[type].map(task => ({
@@ -1610,6 +1611,20 @@ function getTaskForSubmission(submission) {
     return (state.taskList[submission.taskType] || []).find(item => Number(item.id) === Number(submission.taskId));
 }
 
+function getReviewStudentKey(submission) {
+    return String(submission.studentUid || submission.email || submission.nama || submission.id);
+}
+
+function selectReviewStudent(encodedKey) {
+    selectedReviewStudentKey = decodeURIComponent(encodedKey);
+    renderGuruView();
+}
+
+function backToReviewStudents() {
+    selectedReviewStudentKey = null;
+    renderGuruView();
+}
+
 function getTaskReviewMarkup(submission) {
     const task = getTaskForSubmission(submission);
     if (!task || !Array.isArray(task.questions) || task.questions.length === 0) return '';
@@ -1773,18 +1788,47 @@ function renderGuruView() {
     }
     const matchesReviewFilter = submission => (selectedClass === 'all' || String(submission.classId || '') === selectedClass) && (selectedType === 'all' || submission.taskType === selectedType) && (selectedTask === 'all' || `${submission.taskType}|${submission.taskTitle}` === selectedTask);
     const filteredSubmissions = state.studentSubmissions.filter(matchesReviewFilter);
+    const studentGroupsMap = new Map();
+    filteredSubmissions.forEach(submission => {
+        const key = getReviewStudentKey(submission);
+        if (!studentGroupsMap.has(key)) {
+            studentGroupsMap.set(key, { key, nama: submission.nama || 'Siswa', email: submission.email || '', classId: submission.classId, submissions: [] });
+        }
+        studentGroupsMap.get(key).submissions.push(submission);
+    });
+    const studentGroups = [...studentGroupsMap.values()].sort((left, right) => String(left.nama).localeCompare(String(right.nama)));
+    if (selectedReviewStudentKey && !studentGroupsMap.has(selectedReviewStudentKey)) selectedReviewStudentKey = null;
+    const studentSubmissions = selectedReviewStudentKey
+        ? filteredSubmissions.filter(submission => getReviewStudentKey(submission) === selectedReviewStudentKey)
+        : [];
     const sortReviewGroups = submissions => submissions.slice().sort((left, right) => {
         const leftKey = `${left.classId || 0}-${left.taskType || ''}-${left.taskTitle || ''}`;
         const rightKey = `${right.classId || 0}-${right.taskType || ''}-${right.taskTitle || ''}`;
         return leftKey.localeCompare(rightKey) || String(left.nama || '').localeCompare(String(right.nama || ''));
     });
-    const pendingSubmissions = sortReviewGroups(filteredSubmissions.filter(s => s.status === 'pending'));
-    const reviewedSubmissions = sortReviewGroups(filteredSubmissions.filter(s => s.status === 'reviewed'));
+    const pendingSubmissions = sortReviewGroups(studentSubmissions.filter(submission => submission.status === 'pending'));
+    const reviewedSubmissions = sortReviewGroups(studentSubmissions.filter(submission => submission.status === 'reviewed'));
+    const totalPendingSubmissions = filteredSubmissions.filter(submission => submission.status === 'pending').length;
     
     const countEl = document.getElementById('teacherReviewCount');
-    if (countEl) countEl.innerText = pendingSubmissions.length;
+    if (countEl) countEl.innerText = totalPendingSubmissions;
 
     if (reviewContainer) {
+        if (!selectedReviewStudentKey) {
+            reviewContainer.innerHTML = studentGroups.length ? studentGroups.map(group => {
+                const pendingCount = group.submissions.filter(submission => submission.status === 'pending').length;
+                const encodedKey = encodeURIComponent(group.key).replace(/'/g, '%27');
+                const submissionList = group.submissions.slice().sort((left, right) => String(right.timestamp || '').localeCompare(String(left.timestamp || ''))).map(submission => `
+                    <div class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 py-2.5">
+                        <div><p class="text-xs font-bold text-slate-800">${escapeHtml(submission.taskType || 'Tugas')} · ${escapeHtml(submission.taskTitle || 'Tanpa judul')}</p><p class="text-[10px] text-slate-500">${escapeHtml(submission.timestamp || '-')}</p></div>
+                        <span class="rounded-full px-2.5 py-1 text-[10px] font-bold ${submission.status === 'reviewed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">${submission.status === 'reviewed' ? 'Sudah dinilai' : 'Menunggu review'}</span>
+                    </div>
+                `).join('');
+                return `<section class="overflow-hidden rounded-xl border border-slate-200 bg-white"><button type="button" onclick="selectReviewStudent('${encodedKey}')" class="flex w-full items-start justify-between gap-3 p-4 text-left hover:bg-slate-50"><span><span class="block text-sm font-extrabold text-slate-900">${escapeHtml(group.nama)}</span><span class="mt-1 block text-xs text-slate-500">${escapeHtml(group.email || getClassName(group.classId))}</span></span><span class="shrink-0 rounded-full bg-indigo-100 px-2.5 py-1 text-[10px] font-bold text-indigo-800">${pendingCount} perlu dinilai</span></button><div class="px-4 pb-2">${submissionList}</div></section>`;
+            }).join('') : '<p class="rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">Belum ada kiriman siswa yang cocok dengan filter ini.</p>';
+            return;
+        }
+
         const groupHeader = (sub) => `<div class="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3"><p class="text-[10px] font-black uppercase text-indigo-700">${escapeHtml(getClassName(sub.classId))} · ${escapeHtml(sub.taskType || 'Tugas')}</p><p class="text-sm font-extrabold text-slate-900 mt-1">${escapeHtml(sub.taskTitle || 'Tanpa judul')}</p></div>`;
         const pendingMarkup = pendingSubmissions.map((sub, index) => `
             ${index === 0 || `${pendingSubmissions[index - 1].classId}-${pendingSubmissions[index - 1].taskType}-${pendingSubmissions[index - 1].taskTitle}` !== `${sub.classId}-${sub.taskType}-${sub.taskTitle}` ? groupHeader(sub) : ''}
@@ -1832,7 +1876,8 @@ function renderGuruView() {
             ${index === 0 || `${reviewedSubmissions[index - 1].classId}-${reviewedSubmissions[index - 1].taskType}-${reviewedSubmissions[index - 1].taskTitle}` !== `${sub.classId}-${sub.taskType}-${sub.taskTitle}` ? groupHeader(sub) : ''}
             <div class="bg-emerald-50/60 rounded-2xl p-5 border border-emerald-100"><div class="flex flex-wrap items-start justify-between gap-3"><div><h4 class="font-extrabold text-slate-900">${escapeHtml(sub.nama)}</h4><p class="text-xs text-slate-500 mt-1">${escapeHtml(sub.email || '-')} · ${escapeHtml(sub.timestamp || '-')}</p></div><span class="text-2xl font-black text-emerald-700">${escapeHtml(sub.finalScore ?? sub.aiScore ?? '-')}</span></div><div class="mt-3 space-y-3">${getTaskReviewMarkup(sub)}${getTaskForSubmission(sub)?.questions?.length ? '' : `<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Jawaban Siswa</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.jawaban || '-')}</p>${getSubmissionAttachmentsMarkup(sub)}</div>`}<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Nilai & Feedback Keseluruhan</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.teacherNote || 'Belum ada feedback')}</p></div></div><button onclick="deleteReviewedSubmission(${sub.id})" class="w-full mt-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold py-2.5 rounded-xl text-xs transition">Hapus Nilai & Feedback</button></div>
         `).join('');
-        reviewContainer.innerHTML = `<section class="space-y-4"><div class="flex items-center justify-between"><h4 class="text-base font-black text-slate-900">Perlu Dinilai <span class="text-xs text-amber-600">(${pendingSubmissions.length})</span></h4></div>${pendingMarkup || '<p class="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6">Tidak ada kiriman yang perlu dinilai pada filter ini.</p>'}</section><section class="space-y-4 pt-5 border-t border-slate-200"><div class="flex items-center justify-between"><h4 class="text-base font-black text-slate-900">Nilai & Feedback <span class="text-xs text-emerald-600">(${reviewedSubmissions.length})</span></h4></div>${reviewedMarkup || '<p class="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6">Belum ada nilai pada filter ini.</p>'}</section>`;
+        const selectedStudent = studentGroupsMap.get(selectedReviewStudentKey);
+        reviewContainer.innerHTML = `<div class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4"><button type="button" onclick="backToReviewStudents()" class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200">← Daftar Siswa</button><div><h3 class="text-sm font-extrabold text-slate-900">${escapeHtml(selectedStudent?.nama || 'Siswa')}</h3><p class="text-[10px] text-slate-500">${escapeHtml(selectedStudent?.email || getClassName(selectedStudent?.classId))} · ${studentSubmissions.length} kiriman</p></div></div><section class="space-y-4"><div class="flex items-center justify-between"><h4 class="text-base font-black text-slate-900">Perlu Dinilai <span class="text-xs text-amber-600">(${pendingSubmissions.length})</span></h4></div>${pendingMarkup || '<p class="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6">Tidak ada kiriman yang perlu dinilai.</p>'}</section><section class="space-y-4 pt-5 border-t border-slate-200"><div class="flex items-center justify-between"><h4 class="text-base font-black text-slate-900">Nilai & Feedback <span class="text-xs text-emerald-600">(${reviewedSubmissions.length})</span></h4></div>${reviewedMarkup || '<p class="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6">Belum ada nilai pada filter ini.</p>'}</section>`;
     }
 }
 
