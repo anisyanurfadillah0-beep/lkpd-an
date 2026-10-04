@@ -17,7 +17,7 @@ async function saveLearningContentToFirestore() {
     }
 
     await firebaseDb.collection('appData').doc('learningContent').set({
-        classes: state.classes,
+        classes: state.classes.map(({ accessCode, ...classData }) => classData),
         materiList: state.materiList,
         taskList: state.taskList,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -160,7 +160,7 @@ async function saveLearningContent() {
     if (!isFirebaseReady() || !firebaseAuth.currentUser) return null;
 
     const content = {
-        classes: state.classes,
+        classes: state.classes.map(({ accessCode, ...classData }) => classData),
         materiList: state.materiList,
         taskList: state.taskList,
         notifications: state.notifications
@@ -172,6 +172,11 @@ async function saveLearningContent() {
     }
 
     try {
+        if (['teacher', 'admin'].includes(normalizeRole(state.currentUser?.role))) {
+            await Promise.all(state.classes.filter(item => item.accessCode).map(item => (
+                firebaseDb.collection('classAccessCodes').doc(String(item.id)).set({ accessCode: item.accessCode })
+            )));
+        }
         await firebaseDb.collection('appData').doc('learningContent').set(content, { merge: true });
         return true;
     } catch (error) {
@@ -207,6 +212,32 @@ async function loadLearningContent() {
                     }));
                 }
             });
+        }
+        const role = normalizeRole(state.currentUser?.role);
+        if (role === 'teacher' || role === 'admin') {
+            const codeSnapshot = await firebaseDb.collection('classAccessCodes').get();
+            const savedCodes = new Map(codeSnapshot.docs.map(doc => [doc.id, doc.data().accessCode]));
+            let needsCodeWrite = false;
+            state.classes.forEach(classItem => {
+                const savedCode = savedCodes.get(String(classItem.id));
+                if (savedCode) classItem.accessCode = savedCode;
+                else {
+                    classItem.accessCode = classItem.accessCode || generateClassAccessCode();
+                    needsCodeWrite = true;
+                }
+            });
+            if (needsCodeWrite) {
+                await Promise.all(state.classes.map(classItem => (
+                    firebaseDb.collection('classAccessCodes').doc(String(classItem.id)).set({ accessCode: classItem.accessCode })
+                )));
+            }
+            if (content.classes?.some(classItem => Object.prototype.hasOwnProperty.call(classItem, 'accessCode'))) {
+                await firebaseDb.collection('appData').doc('learningContent').set({
+                    classes: state.classes.map(({ accessCode, ...classData }) => classData)
+                }, { merge: true });
+            }
+        } else {
+            state.classes.forEach(classItem => { delete classItem.accessCode; });
         }
         migrateLegacyDefaultClassContent();
         saveState();
@@ -922,6 +953,9 @@ function openStudentTask(type, id) {
 
     document.getElementById(`siswa${type}ListView`)?.classList.add('hidden');
     document.getElementById(`siswa${type}DetailView`)?.classList.remove('hidden');
+    document.body.classList.add('student-task-focus');
+    document.body.dataset.studentTaskType = type;
+    window.scrollTo(0, 0);
 
     const titleEl = document.getElementById(`siswa${type}Title`);
     const idEl = document.getElementById(`siswa${type}ActiveId`);
@@ -1213,6 +1247,11 @@ function closeStudentTask(type) {
     delete activeStudentQuestion[type];
     clearInterval(studentTaskTimers[type]);
     delete studentTaskTimers[type];
+    if (!Object.keys(activeStudentQuestion).length) {
+        document.body.classList.remove('student-task-focus');
+        delete document.body.dataset.studentTaskType;
+        window.scrollTo(0, 0);
+    }
 }
 
 function renderSiswaView() {
@@ -1420,20 +1459,38 @@ function getCurrentStudentUser() {
     return state.users.find(user => user.id === state.currentUser?.id || user.email === state.currentUser?.email);
 }
 
-async function selectStudentClass(classId) {
+async function selectStudentClass() {
     const student = getCurrentStudentUser();
     const selector = document.getElementById('studentClassSelector');
     const codeInput = document.getElementById('studentClassCode');
     const selectedClass = state.classes.find(item => Number(item.id) === Number(selector?.value));
-    if (normalizeRole(state.currentUser?.role) !== 'student' || !selectedClass) return;
+    if (normalizeRole(state.currentUser?.role) !== 'student') return;
+    if (!selectedClass) {
+        showStudentClassMessage('Pilih kelas terlebih dahulu.');
+        return;
+    }
     const alreadyJoined = Number(student?.classId || state.currentUser?.classId) === Number(selectedClass.id);
     const submittedCode = String(codeInput?.value || '').trim().toUpperCase();
-    if (!alreadyJoined && (!selectedClass.accessCode || submittedCode !== selectedClass.accessCode.toUpperCase())) {
-        const message = document.getElementById('studentClassMessage');
-        if (message) {
-            message.innerText = selectedClass.accessCode ? 'Kode kelas salah. Minta kode yang benar kepada guru atau admin.' : 'Kode kelas belum dibuat. Minta guru atau admin membuka Manajemen Kelas.';
-            message.classList.remove('hidden');
+    const hasFirebaseSession = isFirebaseReady() && firebaseAuth.currentUser?.uid === state.currentUser?.id;
+    if (!alreadyJoined && hasFirebaseSession) {
+        try {
+            await firebaseDb.collection('users').doc(firebaseAuth.currentUser.uid).collection('classMemberships').doc(String(selectedClass.id)).set({
+                studentUid: firebaseAuth.currentUser.uid,
+                classId: Number(selectedClass.id),
+                accessCode: submittedCode,
+                joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        } catch (error) {
+            console.error('Kode kelas gagal diverifikasi:', error);
+            showStudentClassMessage(error.code === 'permission-denied'
+                ? 'Kode kelas salah atau aturan akses Firestore belum diperbarui.'
+                : 'Kode kelas gagal diverifikasi. Periksa koneksi lalu coba lagi.');
+            return;
         }
+    } else if (!alreadyJoined && (!selectedClass.accessCode || submittedCode !== selectedClass.accessCode.toUpperCase())) {
+        showStudentClassMessage(selectedClass.accessCode
+            ? 'Kode kelas salah. Minta kode yang benar kepada guru atau admin.'
+            : 'Kode kelas belum dibuat. Minta guru atau admin membuka Manajemen Kelas.');
         return;
     }
     if (student) student.classId = Number(selectedClass.id);
@@ -1450,6 +1507,13 @@ async function selectStudentClass(classId) {
             customAlert('Kelas dipilih pada perangkat ini, tetapi gagal disimpan ke akun. Periksa koneksi lalu pilih kelas kembali.', 'Gagal Menyimpan Kelas');
         }
     }
+}
+
+function showStudentClassMessage(messageText) {
+    const message = document.getElementById('studentClassMessage');
+    if (!message) return;
+    message.innerText = messageText;
+    message.classList.remove('hidden');
 }
 
 function clearStudentClassMessage() {

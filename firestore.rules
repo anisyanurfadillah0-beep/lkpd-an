@@ -17,6 +17,15 @@ service cloud.firestore {
       return isSignedIn() && roleOf(request.auth.uid) in ['teacher', 'admin'];
     }
 
+    function hasClassMembership(classId) {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)/classMemberships/$(string(classId)));
+    }
+
+    function classAccessCodeMatches(classId, accessCode) {
+      return exists(/databases/$(database)/documents/classAccessCodes/$(string(classId)))
+        && get(/databases/$(database)/documents/classAccessCodes/$(string(classId))).data.accessCode == accessCode;
+    }
+
     match /users/{uid} {
       allow get: if isSignedIn() && (
         request.auth.uid == uid ||
@@ -37,9 +46,37 @@ service cloud.firestore {
         && request.auth.uid == uid
         && request.resource.data.role == resource.data.role
         && request.resource.data.email == resource.data.email
-        && request.resource.data.name is string;
+        && request.resource.data.name is string
+        && (
+          request.resource.data.get('classId', null) == resource.data.get('classId', null)
+          || (
+            request.resource.data.get('classId', null) is int
+            && hasClassMembership(request.resource.data.classId)
+          )
+        );
 
       allow delete: if isSignedIn() && roleOf(request.auth.uid) == 'admin';
+
+      match /classMemberships/{classId} {
+        allow get: if isSignedIn() && (
+          request.auth.uid == uid || isTeacherOrAdmin()
+        );
+        allow list: if isTeacherOrAdmin();
+        allow create: if isSignedIn()
+          && request.auth.uid == uid
+          && request.resource.data.studentUid == uid
+          && request.resource.data.classId is int
+          && string(request.resource.data.classId) == classId
+          && request.resource.data.accessCode is string
+          && classAccessCodeMatches(classId, request.resource.data.accessCode);
+        allow update: if isTeacherOrAdmin() || (
+          isSignedIn()
+          && request.auth.uid == uid
+          && request.resource.data.studentUid == resource.data.studentUid
+          && request.resource.data.classId == resource.data.classId
+        );
+        allow delete: if isTeacherOrAdmin();
+      }
     }
 
     match /classes/{classId} {
@@ -53,12 +90,27 @@ service cloud.firestore {
     }
 
     match /classMembers/{memberId} {
-      allow read: if isSignedIn();
+      allow get: if isSignedIn() && (
+        isTeacherOrAdmin() || resource.data.studentUid == request.auth.uid
+      );
+      allow list: if isTeacherOrAdmin();
       allow create: if isSignedIn()
         && request.resource.data.studentUid == request.auth.uid
-        && request.resource.data.role == 'student';
-      allow update: if isSignedIn() && request.auth.uid == resource.data.studentUid;
-      allow delete: if isSignedIn() && roleOf(request.auth.uid) == 'teacher';
+        && request.resource.data.role == 'student'
+        && request.resource.data.classId is int
+        && request.resource.data.accessCode is string
+        && classAccessCodeMatches(request.resource.data.classId, request.resource.data.accessCode);
+      allow update: if isTeacherOrAdmin() || (
+        isSignedIn()
+        && request.auth.uid == resource.data.studentUid
+        && request.resource.data.studentUid == resource.data.studentUid
+        && request.resource.data.classId == resource.data.classId
+      );
+      allow delete: if isTeacherOrAdmin();
+    }
+
+    match /classAccessCodes/{classId} {
+      allow read, write: if isTeacherOrAdmin();
     }
 
     match /teacherInvitations/{invitationId} {

@@ -3,6 +3,52 @@ body {
 font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
+body.student-task-focus > header {
+display: none;
+}
+
+body.student-task-focus > main {
+width: 100%;
+max-width: none;
+min-height: 100vh;
+padding: 0;
+}
+
+body.student-task-focus > main > :not([id^="subSiswa"]) {
+display: none !important;
+}
+
+body.student-task-focus > main > [id^="subSiswa"] {
+display: none !important;
+}
+
+body.student-task-focus[data-student-task-type="Lkpd"] > main > #subSiswaLkpd,
+body.student-task-focus[data-student-task-type="Latihan"] > main > #subSiswaLatihan,
+body.student-task-focus[data-student-task-type="Evaluasi"] > main > #subSiswaEvaluasi {
+display: block !important;
+min-height: 100vh;
+padding: clamp(1rem, 4vw, 3rem);
+background: #f1f5f9;
+}
+
+body.student-task-focus[data-student-task-type="Lkpd"] #siswaLkpdDetailView,
+body.student-task-focus[data-student-task-type="Latihan"] #siswaLatihanDetailView,
+body.student-task-focus[data-student-task-type="Evaluasi"] #siswaEvaluasiDetailView {
+display: block;
+width: min(100%, 56rem);
+min-height: calc(100vh - 2 * clamp(1rem, 4vw, 3rem));
+margin: 0 auto;
+padding: clamp(1.25rem, 4vw, 2.5rem);
+border-radius: 1rem;
+box-shadow: 0 12px 36px rgb(15 23 42 / 8%);
+}
+
+body.student-task-focus[data-student-task-type="Lkpd"] #siswaLkpdListView,
+body.student-task-focus[data-student-task-type="Latihan"] #siswaLatihanListView,
+body.student-task-focus[data-student-task-type="Evaluasi"] #siswaEvaluasiListView {
+display: none !important;
+}
+
 .glass-panel {
 background: rgba(255, 255, 255, 0.85);
 backdrop-filter: blur(12px);
