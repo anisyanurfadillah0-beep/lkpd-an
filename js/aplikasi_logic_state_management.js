@@ -669,6 +669,18 @@ function setAuthMode(mode) {
     if (tabReg) tabReg.className = isReg ? 'flex-1 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-slate-800 transition' : 'flex-1 py-2 text-xs font-bold rounded-lg text-slate-500 hover:text-slate-800 transition';
 }
 
+function isFirebaseUnavailableError(error) {
+    const code = String(error?.code || '').toLowerCase();
+    const message = String(error?.message || '').toLowerCase();
+    return code === 'unavailable'
+        || code === 'auth/network-request-failed'
+        || code === 'auth/internal-error'
+        || code === 'auth/timeout'
+        || message.includes('unavailable')
+        || message.includes('network request failed')
+        || message.includes('fetch failed');
+}
+
 function getLoginErrorMessage(error) {
     switch (error?.code) {
         case 'auth/invalid-credential':
@@ -681,7 +693,8 @@ function getLoginErrorMessage(error) {
         case 'auth/unauthorized-domain':
             return 'Domain Live Server belum diizinkan. Tambahkan hostname halaman ini di Authentication > Settings > Authorized domains.';
         case 'auth/network-request-failed':
-            return 'Koneksi ke Firebase gagal. Periksa internet atau apakah Firebase SDK berhasil dimuat.';
+        case 'unavailable':
+            return 'Firebase sedang tidak tersedia. Sistem otomatis mencoba login lokal untuk akun default.';
         case 'auth/invalid-api-key':
             return 'API key Firebase tidak valid. Periksa firebaseConfig dan pastikan proyeknya benar.';
         case 'permission-denied':
@@ -690,6 +703,24 @@ function getLoginErrorMessage(error) {
         default:
             return 'Login gagal. Periksa akun Firebase dan konfigurasi proyek.';
     }
+}
+
+function loginWithLocalAccount(email, password) {
+    const existingUser = state.users.find(user => user.email.toLowerCase() === String(email || '').toLowerCase() && user.password === String(password || ''));
+    if (!existingUser) {
+        return null;
+    }
+
+    const deviceId = getDeviceId();
+    if (existingUser.deviceLocked && existingUser.deviceId && existingUser.deviceId !== deviceId) {
+        customAlert('Akun ini dikunci untuk perangkat lain. Hubungi admin untuk reset device.', 'Device Ditolak');
+        return 'device_locked';
+    }
+
+    existingUser.deviceId = existingUser.deviceId || deviceId;
+    state.currentUser = { id: existingUser.id, role: existingUser.role, email: existingUser.email, nama: existingUser.nama, deviceId: existingUser.deviceId };
+    saveState();
+    return existingUser;
 }
 
 async function handleAuthSubmit(e) {
@@ -746,26 +777,30 @@ async function handleAuthSubmit(e) {
             return;
         } catch (error) {
             console.error(error);
+            const fallbackUser = loginWithLocalAccount(email, password);
+            if (fallbackUser && fallbackUser !== 'device_locked') {
+                routeByRole(fallbackUser.role);
+                return;
+            }
+            if (fallbackUser === 'device_locked') {
+                return;
+            }
+            if (isFirebaseUnavailableError(error)) {
+                customAlert('Firebase sedang tidak tersedia. Sistem telah mencoba login lokal, tetapi akun tidak ditemukan. Cek akun default atau aktifkan Firebase kembali.', 'Login Ditolak');
+                return;
+            }
             customAlert(`${getLoginErrorMessage(error)}\n\nKode error: ${error.code || 'tidak tersedia'}`, 'Login Ditolak');
             return;
         }
     }
 
-    const existingUser = state.users.find(user => user.email.toLowerCase() === email.toLowerCase() && user.password === password);
-    if (!existingUser) {
+    const existingUser = loginWithLocalAccount(email, password);
+    if (!existingUser || existingUser === 'device_locked') {
+        if (existingUser === 'device_locked') return;
         customAlert('Akun tidak ditemukan atau kata sandi salah.', 'Login Ditolak');
         return;
     }
 
-    const deviceId = getDeviceId();
-    if (existingUser.deviceLocked && existingUser.deviceId && existingUser.deviceId !== deviceId) {
-        customAlert('Akun ini dikunci untuk perangkat lain. Hubungi admin untuk reset device.', 'Device Ditolak');
-        return;
-    }
-
-    existingUser.deviceId = existingUser.deviceId || deviceId;
-    state.currentUser = { id: existingUser.id, role: existingUser.role, email: existingUser.email, nama: existingUser.nama, deviceId: existingUser.deviceId };
-    saveState();
     routeByRole(existingUser.role);
 }
 
