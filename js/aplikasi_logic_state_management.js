@@ -867,7 +867,7 @@ async function checkExistingSession(expectedRole) {
                 const profileRole = normalizeRole(profile?.role);
                 if (!profile || !LEGAL_ROLES.has(profileRole)) {
                     customAlert('Akun Anda belum siap. Hubungi admin untuk aktivasi.', 'Akses Ditolak');
-                    await firebaseAuth.signOut();
+                    await firebaseAuth.signOut().catch(() => {});
                     return;
                 }
 
@@ -887,6 +887,16 @@ async function checkExistingSession(expectedRole) {
                 renderDashboardForRole(expectedRole);
             } catch (error) {
                 console.error('Gagal memeriksa sesi Firebase:', error);
+                if (state.currentUser) {
+                    renderDashboardForRole(expectedRole);
+                    return;
+                }
+                if (isFirebaseUnavailableError(error)) {
+                    if (window.location.pathname.includes('dashboard_')) {
+                        renderDashboardForRole(expectedRole);
+                    }
+                    return;
+                }
                 customAlert('Sesi gagal dimuat. Periksa koneksi Firebase lalu muat ulang halaman.', 'Gagal Memuat Sesi');
             }
         });
@@ -968,7 +978,7 @@ function adminPanelMarkup(panel) {
     if (panel === 'konten') return `<div class='grid lg:grid-cols-2 gap-5'>
         <form onsubmit='adminSaveClass(event)' class='bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3'><h4 class='font-black'>Tambah / Edit Kelas</h4><input id='adminClassName' required class='${input}' placeholder='Nama kelas'><textarea id='adminClassDescription' class='${input}' rows='2' placeholder='Deskripsi kelas'></textarea><button class='bg-slate-900 text-white font-bold px-4 py-2 rounded-xl text-xs'>Simpan Kelas</button></form>
         <form onsubmit='adminSaveMaterial(event)' class='bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3'><h4 class='font-black'>Tambah Materi ke Kelas</h4><select id='adminMaterialClass' required class='${input}'>${state.classes.map(c => `<option value='${c.id}'>${c.nama}</option>`).join('')}</select><input id='adminMaterialTitle' required class='${input}' placeholder='Judul materi'><textarea id='adminMaterialDescription' required class='${input}' rows='2' placeholder='Deskripsi materi'></textarea><input id='adminMaterialLink' class='${input}' placeholder='Link dokumen / video (opsional)'><button class='bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs'>Simpan Materi</button></form>
-        <div class='lg:col-span-2 space-y-3'><h4 class='font-black'>Kelas dan Materi</h4>${state.classes.map(c => `<div class='border border-slate-200 rounded-2xl p-4'><div class='flex justify-between gap-3'><div><b>${escapeHtml(c.nama)}</b><p class='text-xs text-slate-500 mt-1'>${escapeHtml(c.deskripsi || 'Tanpa deskripsi')}</p><p class='mt-2 text-xs font-bold text-blue-700'>Kode masuk siswa: <code class='rounded bg-blue-50 px-2 py-1 font-mono'>${escapeHtml(c.accessCode)}</code></p></div><button onclick='adminDeleteClass(${c.id})' class='text-rose-600 text-xs font-bold'>Hapus Kelas</button></div><div class='mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3'><p class='text-[10px] font-black uppercase text-slate-500'>Siswa yang bergabung (${getClassMembers(c.id).length})</p>${renderClassMembersMarkup(c.id)}</div><div class='mt-3 space-y-2'>${(c.materi || []).map(m => `<div class='flex justify-between items-center bg-slate-50 rounded-xl p-3 text-sm'><span>${escapeHtml(m.judul)}</span><button onclick='adminDeleteMaterial(${c.id}, ${m.id})' class='text-rose-600 text-xs font-bold'>Hapus</button></div>`).join('') || `<p class='text-xs text-slate-500'>Belum ada materi.</p>`}</div></div>`).join('')}</div></div>`;
+        <div class='lg:col-span-2 space-y-3'><h4 class='font-black'>Kelas dan Materi</h4>${state.classes.map(c => `<div class='border border-slate-200 rounded-2xl p-4'><div class='flex justify-between gap-3'><div><b>${escapeHtml(c.nama)}</b><p class='text-xs text-slate-500 mt-1'>${escapeHtml(c.deskripsi || 'Tanpa deskripsi')}</p><p class='mt-2 text-xs font-bold text-blue-700'>Kode masuk siswa: <code class='rounded bg-blue-50 px-2 py-1 font-mono'>${escapeHtml(c.accessCode)}</code></p></div><button onclick='adminDeleteClass(${c.id})' class='text-rose-600 text-xs font-bold'>Hapus Kelas</button></div><div class='mt-3 space-y-2'>${(c.materi || []).map(m => `<div class='flex justify-between items-center bg-slate-50 rounded-xl p-3 text-sm'><span>${escapeHtml(m.judul)}</span><button onclick='adminDeleteMaterial(${c.id}, ${m.id})' class='text-rose-600 text-xs font-bold'>Hapus</button></div>`).join('') || `<p class='text-xs text-slate-500'>Belum ada materi.</p>`}</div></div>`).join('')}</div></div>`;
     if (panel === 'akun') return `<div class='space-y-4'>
         <div class='rounded-2xl border border-blue-200 bg-blue-50 p-4'><h4 class='font-black text-blue-900'>Akun dikelola oleh Firebase</h4><p class='mt-2 text-sm text-blue-800'>Panel ini tidak membuat kata sandi, token, atau akun lokal. Firebase Authentication menyimpan kredensial; Firestore menyimpan profil dan role.</p></div>
         <div class='grid gap-3 md:grid-cols-2'>
@@ -1547,30 +1557,6 @@ function getClassName(classId) {
     return state.classes.find(item => item.id === Number(classId))?.nama || 'Belum dipilih';
 }
 
-function getClassMembers(classId) {
-    const targetClassId = Number(classId);
-    return state.users.filter(user => normalizeRole(user.role) === 'student' && Number(user.classId) === targetClassId);
-}
-
-function renderClassMembersMarkup(classId) {
-    const members = getClassMembers(classId);
-    if (!members.length) return '<p class="text-[10px] text-slate-500">Belum ada siswa yang masuk ke kelas ini.</p>';
-
-    return `
-        <div class="mt-2 space-y-1.5">
-            ${members.map(member => `
-                <div class="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
-                    <div>
-                        <p class="text-[11px] font-bold text-slate-800">${escapeHtml(member.nama || 'Siswa')}</p>
-                        <p class="text-[10px] text-slate-500">${escapeHtml(member.email || '-')}</p>
-                    </div>
-                    <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Aktif</span>
-                </div>
-            `).join('')}
-        </div>
-    `;
-}
-
 function generateClassAccessCode() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code;
@@ -1823,21 +1809,12 @@ function renderGuruView() {
     const classList = document.getElementById('guruClassList');
     if (classCount) classCount.innerText = state.classes.length;
     if (classList) {
-        classList.innerHTML = state.classes.map(c => {
-            const members = getClassMembers(c.id);
-            return `
-                <div class="flex flex-col gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <div class="flex items-center justify-between gap-3">
-                        <div><h4 class="font-bold text-sm text-slate-800">${escapeHtml(c.nama)}</h4><p class="text-[10px] text-slate-500 mt-1">${escapeHtml(c.deskripsi || 'Tanpa deskripsi')}</p><p class="mt-2 text-xs font-bold text-indigo-700">Kode masuk siswa: <code class="rounded bg-indigo-50 px-2 py-1 font-mono">${escapeHtml(c.accessCode)}</code></p></div>
-                        <div class="flex gap-2"><button onclick="editClassByGuru(${c.id})" class="text-[11px] bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-bold px-3 py-1.5 rounded-lg transition">Edit</button><button onclick="deleteClassByGuru(${c.id})" class="text-[11px] bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold px-3 py-1.5 rounded-lg transition">Hapus</button></div>
-                    </div>
-                    <div class="rounded-xl border border-slate-200 bg-white p-3">
-                        <p class="text-[10px] font-black uppercase text-slate-500 mb-2">Siswa yang bergabung (${members.length})</p>
-                        ${renderClassMembersMarkup(c.id)}
-                    </div>
-                </div>
-            `;
-        }).join('');
+        classList.innerHTML = state.classes.map(c => `
+            <div class="flex items-center justify-between gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div><h4 class="font-bold text-sm text-slate-800">${escapeHtml(c.nama)}</h4><p class="text-[10px] text-slate-500 mt-1">${escapeHtml(c.deskripsi || 'Tanpa deskripsi')}</p><p class="mt-2 text-xs font-bold text-indigo-700">Kode masuk siswa: <code class="rounded bg-indigo-50 px-2 py-1 font-mono">${escapeHtml(c.accessCode)}</code></p></div>
+                <div class="flex gap-2"><button onclick="editClassByGuru(${c.id})" class="text-[11px] bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-bold px-3 py-1.5 rounded-lg transition">Edit</button><button onclick="deleteClassByGuru(${c.id})" class="text-[11px] bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold px-3 py-1.5 rounded-lg transition">Hapus</button></div>
+            </div>
+        `).join('');
         if (state.classes.length === 0) classList.innerHTML = '<p class="text-xs text-slate-500">Belum ada kelas aktif.</p>';
     }
 
