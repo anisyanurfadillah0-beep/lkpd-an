@@ -1048,9 +1048,63 @@ function isTaskOpen(openDate, closeDate) {
     return now >= start && now <= end;
 }
 
+function hasStudentSubmittedTask(taskId) {
+    const currentUser = state.currentUser;
+    if (!currentUser) return false;
+    const studentUid = firebaseAuth?.currentUser?.uid;
+    const email = String(currentUser.email || '').trim().toLowerCase();
+    return state.studentSubmissions.some(submission => (
+        String(submission.taskId) === String(taskId)
+        && submission.taskType === 'Lkpd'
+        && ((studentUid && submission.studentUid === studentUid)
+            || (email && String(submission.email || '').trim().toLowerCase() === email))
+    ));
+}
+
+function getTaskPrerequisite(task) {
+    if (!task) return null;
+    if (task.prerequisiteLkpdId) {
+        return state.taskList.Lkpd.find(item => String(item.id) === String(task.prerequisiteLkpdId)) || null;
+    }
+    if (state.taskList.Lkpd.some(item => String(item.id) === String(task.id))) return null;
+    const classTasks = state.taskList.Lkpd.filter(item => Number(item.classId) === Number(task.classId));
+    return classTasks.length === 1 ? classTasks[0] : null;
+}
+
+function renderLinkedLkpdOptions(type, selectedId = null) {
+    const selector = document.getElementById(`form${type}Lkpd`);
+    const classId = Number(document.getElementById(`form${type}Class`)?.value);
+    if (!selector) return;
+    const previousValue = selectedId ?? selector.value;
+    const linkedTasks = state.taskList.Lkpd.filter(task => Number(task.classId) === classId);
+    selector.innerHTML = `<option value="">Pilih LKPD prasyarat</option>${linkedTasks.map(task => `<option value="${task.id}">${escapeHtml(task.title)}</option>`).join('')}`;
+    selector.value = linkedTasks.some(task => String(task.id) === String(previousValue)) ? previousValue : '';
+    selector.disabled = linkedTasks.length === 0;
+}
+
+function isStudentTaskUnlocked(task) {
+    if (state.taskList.Lkpd.some(item => String(item.id) === String(task?.id))) return true;
+    if (task?.prerequisiteLkpdId) {
+        const prerequisite = getTaskPrerequisite(task);
+        return Boolean(prerequisite && hasStudentSubmittedTask(prerequisite.id));
+    }
+    const classTasks = state.taskList.Lkpd.filter(item => Number(item.classId) === Number(task?.classId));
+    if (classTasks.length === 0) return true;
+    const prerequisite = getTaskPrerequisite(task);
+    return Boolean(prerequisite && hasStudentSubmittedTask(prerequisite.id));
+}
+
 function openStudentTask(type, id) {
     const task = state.taskList[type].find(t => t.id === id);
     if (!task) return;
+
+    const prerequisite = getTaskPrerequisite(task);
+    if (type !== 'Lkpd' && !isStudentTaskUnlocked(task)) {
+        customAlert(prerequisite
+            ? `Selesaikan dan kirim LKPD "${prerequisite.title}" terlebih dahulu sebelum mengerjakan tugas ini.`
+            : 'Tugas ini belum memiliki LKPD prasyarat. Minta guru mengaitkannya dengan LKPD yang sesuai.', 'Tugas Masih Terkunci');
+        return;
+    }
 
     if (!isTaskOpen(task.openDate, task.closeDate)) {
         customAlert(`Tugas ini belum dapat diakses atau sudah ditutup.\nJadwal: ${new Date(task.openDate).toLocaleString()} - ${new Date(task.closeDate).toLocaleString()}`, "Akses Ditolak");
@@ -1433,14 +1487,18 @@ function renderSiswaView() {
         const visibleTasks = state.taskList[type].filter(isForSelectedClass);
         container.innerHTML = visibleTasks.map(t => {
             const isOpen = isTaskOpen(t.openDate, t.closeDate);
+            const prerequisite = getTaskPrerequisite(t);
+            const isUnlocked = isStudentTaskUnlocked(t);
             return `
             <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition">
                 <div>
                     <h4 class="font-bold text-sm text-slate-800">${t.title}</h4>
+                    ${prerequisite ? `<p class="text-[10px] ${isUnlocked ? 'text-emerald-700' : 'text-amber-700'} mt-0.5">${isUnlocked ? `Prasyarat selesai: ${escapeHtml(prerequisite.title)}` : `Terkunci sampai LKPD selesai: ${escapeHtml(prerequisite.title)}`}</p>` : ''}
+                    ${type !== 'Lkpd' && !prerequisite && !isUnlocked ? '<p class="text-[10px] text-amber-700 mt-0.5">LKPD prasyarat belum ditentukan oleh guru.</p>' : ''}
                     <p class="text-[10px] text-slate-500 mt-0.5">Berlaku: ${new Date(t.openDate).toLocaleString()} - ${new Date(t.closeDate).toLocaleString()}</p>
                 </div>
-                <button onclick="openStudentTask('${type}', ${t.id})" class="px-4 py-2 text-xs font-bold rounded-lg transition ${isOpen ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}">
-                    ${isOpen ? 'Kerjakan' : 'Terkunci'}
+                <button onclick="openStudentTask('${type}', ${t.id})" ${!isUnlocked || !isOpen ? 'disabled' : ''} class="px-4 py-2 text-xs font-bold rounded-lg transition ${isOpen && isUnlocked ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}">
+                    ${!isUnlocked || !isOpen ? 'Terkunci' : 'Kerjakan'}
                 </button>
             </div>`;
         }).join('');
@@ -1805,6 +1863,8 @@ function renderGuruView() {
         if (selector && !selector.dataset.userSelected) selector.innerHTML = classOptions;
         if (selector) selector.disabled = state.classes.length === 0;
     });
+    renderLinkedLkpdOptions('Latihan');
+    renderLinkedLkpdOptions('Evaluasi');
     const classCount = document.getElementById('guruClassCount');
     const classList = document.getElementById('guruClassList');
     if (classCount) classCount.innerText = state.classes.length;
@@ -2052,6 +2112,14 @@ async function submitSiswaWork(type, confirmed = false) {
     const taskObj = state.taskList[type].find(t => t.id === taskId);
     if (!taskObj || new Date(taskObj.closeDate).getTime() <= Date.now()) {
         customAlert('Waktu pengerjaan sudah habis. Jawaban tidak dapat dikirim lagi.', 'Waktu Habis');
+        closeStudentTask(type);
+        return;
+    }
+    const prerequisite = getTaskPrerequisite(taskObj);
+    if (type !== 'Lkpd' && !isStudentTaskUnlocked(taskObj)) {
+        customAlert(prerequisite
+            ? `Selesaikan dan kirim LKPD "${prerequisite.title}" terlebih dahulu sebelum mengerjakan tugas ini.`
+            : 'Tugas ini belum memiliki LKPD prasyarat. Minta guru mengaitkannya dengan LKPD yang sesuai.', 'Tugas Masih Terkunci');
         closeStudentTask(type);
         return;
     }
@@ -2486,6 +2554,12 @@ async function saveNewTask(e, type) {
         if (submitButton) submitButton.disabled = false;
         return;
     }
+    const prerequisiteLkpdId = type === 'Lkpd' ? null : Number(document.getElementById(`form${type}Lkpd`)?.value || 0);
+    if (type !== 'Lkpd' && (!prerequisiteLkpdId || !state.taskList.Lkpd.some(task => task.id === prerequisiteLkpdId && Number(task.classId) === classId))) {
+        customAlert('Pilih LKPD prasyarat dari kelas yang sama sebelum menyimpan tugas.', 'LKPD Prasyarat Belum Dipilih');
+        if (submitButton) submitButton.disabled = false;
+        return;
+    }
 
     const form = e.target;
     const editingId = Number(form.dataset.editingId || 0);
@@ -2495,8 +2569,9 @@ async function saveNewTask(e, type) {
         questions: questionFields,
         content: questionFields.map(question => question.text).filter(Boolean).join('\n\n'),
         openDate: document.getElementById(`form${type}Open`).value,
-        closeDate: document.getElementById(`form${type}Close`).value
-        , classId
+        closeDate: document.getElementById(`form${type}Close`).value,
+        classId,
+        ...(type !== 'Lkpd' ? { prerequisiteLkpdId } : {})
     };
 
     if (new Date(newTask.openDate) >= new Date(newTask.closeDate)) {
@@ -2536,6 +2611,7 @@ function editTask(type, id) {
     document.getElementById(`form${type}Open`).value = task.openDate;
     document.getElementById(`form${type}Close`).value = task.closeDate;
     document.getElementById(`form${type}Class`).value = task.classId || state.classes[0]?.id || '';
+    if (type !== 'Lkpd') renderLinkedLkpdOptions(type, task.prerequisiteLkpdId);
     const questions = document.getElementById(`form${type}Questions`);
     questions.innerHTML = '';
     task.questions.forEach(question => addQuestionField(type, question));
