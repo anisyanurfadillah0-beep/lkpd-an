@@ -143,6 +143,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /gradingSuggestions/{submissionId} {
+      allow read, write: if isTeacherOrAdmin();
+    }
+
     match /answerKeys/{doc} {
       allow read: if isSignedIn()
         && roleOf(request.auth.uid) in ['teacher', 'admin'];

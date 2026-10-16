@@ -8,6 +8,7 @@ const firebaseConfig = {
     appId: '1:693641664602:web:89b440a62a9c7bd345e063',
     measurementId: 'G-B3F0SPSMPW'
 };
+window.mathlearnFirebaseConfig = firebaseConfig;
 const firebaseAppCheckSiteKey = window.__FIREBASE_APPCHECK_SITE_KEY__ || '';
 
 const DEFAULT_ROLE = 'student';
@@ -20,7 +21,7 @@ async function saveLearningContentToFirestore() {
     await firebaseDb.collection('appData').doc('learningContent').set({
         classes: state.classes.map(({ accessCode, ...classData }) => classData),
         materiList: state.materiList,
-        taskList: state.taskList,
+        taskList: getPublicTaskList(state.taskList),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 }
@@ -166,6 +167,10 @@ const studentNotificationPageSize = 4;
 let studentNotificationPage = 0;
 let selectedReviewStudentKey = null;
 let selectedReviewSubmissionId = null;
+const gradingSuggestionCache = new Map();
+const gradingRunsInFlight = new Set();
+let gradingSuggestionsUnsubscribe = null;
+let gradingQueueRunning = false;
 
 Object.keys(state.taskList).forEach(type => {
     state.taskList[type] = state.taskList[type].map(task => ({
@@ -196,9 +201,24 @@ function migrateLegacyDefaultClassContent() {
 
 migrateLegacyDefaultClassContent();
 
+function getPublicTaskList(taskList) {
+    return Object.fromEntries(Object.entries(taskList).map(([type, tasks]) => [
+        type,
+        tasks.map(task => ({
+            ...task,
+            questions: (task.questions || []).map(question => {
+                if (typeof question === 'string') return question;
+                const { correctAnswer, ...publicQuestion } = question;
+                return publicQuestion;
+            })
+        }))
+    ]));
+}
+
 function saveState() {
     const persistedState = {
         ...state,
+        taskList: getPublicTaskList(state.taskList),
         studentSubmissions: state.studentSubmissions.map(submission => ({
             ...submission,
             attachments: Array.isArray(submission.attachments)
@@ -219,7 +239,7 @@ async function saveLearningContent() {
     const content = {
         classes: state.classes.map(({ accessCode, ...classData }) => classData),
         materiList: state.materiList,
-        taskList: state.taskList,
+        taskList: getPublicTaskList(state.taskList),
         notifications: state.notifications
     };
 
@@ -264,6 +284,11 @@ async function loadLearningContent() {
         }
 
         const content = snapshot.data();
+        const containsPublicAnswerKeys = Object.values(content.taskList || {}).some(tasks => (
+            Array.isArray(tasks) && tasks.some(task => task.questions?.some(question => (
+                question && typeof question === 'object' && Object.prototype.hasOwnProperty.call(question, 'correctAnswer')
+            )))
+        ));
         if (Array.isArray(content.classes)) state.classes = content.classes;
         if (Array.isArray(content.materiList)) state.materiList = content.materiList;
         if (Array.isArray(content.notifications)) state.notifications = content.notifications;
@@ -323,6 +348,8 @@ async function loadLearningContent() {
             state.classes.forEach(classItem => { delete classItem.accessCode; });
         }
         migrateLegacyDefaultClassContent();
+        if (role === 'teacher' || role === 'admin') await loadPrivateAnswerKeysIntoTeacherTasks();
+        if (containsPublicAnswerKeys && (role === 'teacher' || role === 'admin')) await saveLearningContent();
         saveState();
         if ((role === 'teacher' || role === 'admin') && !classAccessCodesSyncAvailable) showClassAccessCodesSyncWarning();
         return true;
@@ -393,10 +420,27 @@ function watchStudentSubmissions() {
             return { ...doc.data(), id: Number.isSafeInteger(numericId) ? numericId : doc.id };
         });
         saveState();
-        if (role === 'teacher' || role === 'admin') renderGuruView();
+        if (role === 'teacher' || role === 'admin') {
+            renderGuruView();
+            queuePendingSubmissionGrading();
+        }
         else renderSiswaView();
     }, error => {
         console.error('Gagal memantau kiriman siswa:', error);
+    });
+}
+
+function watchGradingSuggestions() {
+    if (!isFirebaseReady() || !firebaseAuth.currentUser || !['teacher', 'admin'].includes(normalizeRole(state.currentUser?.role))) return;
+    if (gradingSuggestionsUnsubscribe) gradingSuggestionsUnsubscribe();
+
+    gradingSuggestionsUnsubscribe = firebaseDb.collection('gradingSuggestions').onSnapshot(snapshot => {
+        gradingSuggestionCache.clear();
+        snapshot.docs.forEach(doc => gradingSuggestionCache.set(doc.id, doc.data()));
+        renderGuruView();
+        queuePendingSubmissionGrading();
+    }, error => {
+        console.error('Gagal memuat saran penilaian AI:', error);
     });
 }
 
@@ -909,6 +953,7 @@ async function checkExistingSession(expectedRole) {
                 await loadLearningContent();
                 await loadStudentSubmissions();
                 watchStudentSubmissions();
+                watchGradingSuggestions();
                 renderDashboardForRole(expectedRole);
             } catch (error) {
                 console.error('Gagal memeriksa sesi Firebase:', error);
@@ -1776,6 +1821,177 @@ function getTaskForSubmission(submission) {
     return (state.taskList[submission.taskType] || []).find(item => Number(item.id) === Number(submission.taskId));
 }
 
+async function getGradingRubricForTask(taskId) {
+    const role = normalizeRole(state.currentUser?.role);
+    if (!['teacher', 'admin'].includes(role) || !isFirebaseReady() || !firebaseAuth.currentUser) {
+        throw new Error('Rubrik hanya dapat dimuat oleh guru atau admin yang sudah login.');
+    }
+
+    const snapshot = await firebaseDb.collection('gradingRubrics')
+        .where('taskId', '==', String(taskId))
+        .limit(1)
+        .get();
+
+    return snapshot.empty ? null : snapshot.docs[0].data();
+}
+
+async function getAnswerKeyForTask(taskId) {
+    const role = normalizeRole(state.currentUser?.role);
+    if (!['teacher', 'admin'].includes(role) || !isFirebaseReady() || !firebaseAuth.currentUser) {
+        throw new Error('Kunci jawaban hanya dapat dimuat oleh guru atau admin yang sudah login.');
+    }
+
+    const snapshot = await firebaseDb.collection('answerKeys')
+        .where('taskId', '==', String(taskId))
+        .limit(1)
+        .get();
+
+    return snapshot.empty ? null : snapshot.docs[0].data();
+}
+
+async function loadPrivateAnswerKeysIntoTeacherTasks() {
+    const role = normalizeRole(state.currentUser?.role);
+    if (!['teacher', 'admin'].includes(role) || !isFirebaseReady() || !firebaseAuth.currentUser) return;
+
+    const snapshot = await firebaseDb.collection('answerKeys').get();
+    const keysByTask = new Map(snapshot.docs.map(doc => [String(doc.data().taskId), doc.data()]));
+    Object.keys(state.taskList).forEach(type => {
+        state.taskList[type] = state.taskList[type].map(task => {
+            const keyDocument = keysByTask.get(String(task.id));
+            const keyedQuestions = keyDocument?.questions || keyDocument?.answers;
+            if (!Array.isArray(keyedQuestions)) return task;
+            return {
+                ...task,
+                questions: (task.questions || []).map((question, index) => {
+                    if (!question || typeof question !== 'object') return question;
+                    const key = keyedQuestions[index];
+                    const correctAnswer = key && typeof key === 'object'
+                        ? key.correctAnswer ?? key.answer
+                        : key;
+                    return correctAnswer === undefined ? question : { ...question, correctAnswer };
+                })
+            };
+        });
+    });
+}
+
+async function gradePendingSubmissionWithAI(submissionId, retry = false) {
+    const role = normalizeRole(state.currentUser?.role);
+    if (role !== 'teacher' || !isFirebaseReady() || !firebaseAuth.currentUser) {
+        throw new Error('Penilaian AI hanya dapat dijalankan dari dashboard guru.');
+    }
+
+    const submission = state.studentSubmissions.find(item => String(item.id) === String(submissionId));
+    if (!submission || submission.status !== 'pending') return;
+    const cacheKey = String(submission.id);
+    if (gradingRunsInFlight.has(cacheKey)) return;
+    gradingRunsInFlight.add(cacheKey);
+
+    const suggestionRef = firebaseDb.collection('gradingSuggestions').doc(cacheKey);
+    try {
+        const claim = await firebaseDb.runTransaction(async transaction => {
+            const snapshot = await transaction.get(suggestionRef);
+            const existing = snapshot.exists ? snapshot.data() : null;
+            const updatedAt = existing?.updatedAt?.toMillis?.() || 0;
+            const processingIsRecent = existing?.status === 'processing' && Date.now() - updatedAt < 5 * 60 * 1000;
+            if (existing?.status === 'ready' || processingIsRecent || (existing?.status === 'error' && !retry)) {
+                return { claimed: false, suggestion: existing };
+            }
+
+            transaction.set(suggestionRef, {
+                submissionId: cacheKey,
+                taskId: String(submission.taskId),
+                status: 'processing',
+                error: firebase.firestore.FieldValue.delete(),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            return { claimed: true };
+        });
+
+        if (!claim.claimed) {
+            if (claim.suggestion) gradingSuggestionCache.set(cacheKey, claim.suggestion);
+            renderGuruView();
+            return;
+        }
+        gradingSuggestionCache.set(cacheKey, { submissionId: cacheKey, taskId: String(submission.taskId), status: 'processing' });
+        renderGuruView();
+
+        const task = getTaskForSubmission(submission);
+        if (!task) throw new Error('Soal tugas ini tidak ditemukan.');
+        const [rubric, answerKey] = await Promise.all([
+            getGradingRubricForTask(task.id),
+            getAnswerKeyForTask(task.id)
+        ]);
+        if (!rubric) throw new Error('Rubrik tugas belum tersedia di koleksi gradingRubrics.');
+        if (!answerKey) throw new Error('Kunci jawaban tugas belum tersedia di koleksi answerKeys.');
+        if (typeof window.gradeSubmissionWithGemini !== 'function') {
+            throw new Error(window.aiGradingInitializationError || 'Modul Firebase AI Logic belum siap.');
+        }
+
+        const result = await window.gradeSubmissionWithGemini({ task, submission, rubric, answerKey });
+        const suggestion = {
+            submissionId: cacheKey,
+            taskId: String(task.id),
+            status: 'ready',
+            finalScore: result.finalScore,
+            overallFeedback: result.overallFeedback,
+            confidence: result.confidence,
+            questionReviews: result.questionReviews,
+            model: 'gemini-3.8-flash',
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        await suggestionRef.set(suggestion, { merge: true });
+        gradingSuggestionCache.set(cacheKey, { ...suggestion, updatedAt: new Date() });
+    } catch (error) {
+        const message = String(error?.message || 'Penilaian AI gagal.').slice(0, 500);
+        const suggestion = {
+            submissionId: cacheKey,
+            taskId: String(submission.taskId),
+            status: 'error',
+            error: message,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        await suggestionRef.set(suggestion, { merge: true }).catch(saveError => {
+            console.error('Gagal menyimpan status penilaian AI:', saveError);
+        });
+        gradingSuggestionCache.set(cacheKey, { ...suggestion, updatedAt: new Date() });
+        console.error('Penilaian AI gagal:', error);
+    } finally {
+        gradingRunsInFlight.delete(cacheKey);
+        renderGuruView();
+    }
+}
+
+async function queuePendingSubmissionGrading() {
+    if (gradingQueueRunning || !isFirebaseReady() || normalizeRole(state.currentUser?.role) !== 'teacher') return;
+    gradingQueueRunning = true;
+    try {
+        while (true) {
+            const submission = state.studentSubmissions.find(item => {
+                if (item.status !== 'pending') return false;
+                const suggestion = gradingSuggestionCache.get(String(item.id));
+                return suggestion?.status !== 'ready'
+                    && suggestion?.status !== 'error'
+                    && !isGradingSuggestionProcessing(suggestion);
+            });
+            if (!submission) break;
+            await gradePendingSubmissionWithAI(submission.id);
+        }
+    } finally {
+        gradingQueueRunning = false;
+    }
+}
+
+function isGradingSuggestionProcessing(suggestion) {
+    if (suggestion?.status !== 'processing') return false;
+    const updatedAt = suggestion.updatedAt?.toMillis?.() || suggestion.updatedAt?.getTime?.() || 0;
+    return !updatedAt || Date.now() - updatedAt < 5 * 60 * 1000;
+}
+
+function retryPendingSubmissionGrading(submissionId) {
+    gradePendingSubmissionWithAI(submissionId, true);
+}
+
 function getStudentSubmissionQuestionDetails(submission) {
     const task = getTaskForSubmission(submission);
     const answers = Array.isArray(submission.questionAnswers) ? submission.questionAnswers : [];
@@ -1835,6 +2051,8 @@ function backToReviewTasks() {
 function getTaskReviewMarkup(submission) {
     const task = getTaskForSubmission(submission);
     if (!task || !Array.isArray(task.questions) || task.questions.length === 0) return '';
+    const aiSuggestion = submission.status === 'pending' ? gradingSuggestionCache.get(String(submission.id)) : null;
+    const questionReviews = aiSuggestion?.status === 'ready' ? aiSuggestion.questionReviews : submission.questionReviews;
 
     const questions = task.questions.map((rawQuestion, index) => {
         const question = normalizeQuestion(rawQuestion);
@@ -1852,7 +2070,7 @@ function getTaskReviewMarkup(submission) {
         const options = question.type === 'choice'
             ? `<ol class="mt-2 list-inside list-[upper-alpha] space-y-1 text-slate-700">${(question.options || []).map((option, optionIndex) => `<li>${escapeHtml(option)}${String(question.correctAnswer) === String(optionIndex) ? ' <strong class="text-emerald-700">(Kunci)</strong>' : ''}</li>`).join('')}</ol>`
             : '';
-        const review = submission.questionReviews?.[index] || {};
+        const review = questionReviews?.[index] || {};
         const gradeFields = submission.status === 'pending'
             ? `<div class="mt-3 grid gap-3 sm:grid-cols-[10rem_1fr]"><label class="text-xs font-bold text-slate-700">Nilai soal ${index + 1}<input id="questionScore_${submission.id}_${index}" type="number" min="0" max="100" step="0.5" value="${escapeHtml(review.score ?? '')}" class="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0-100"></label><label class="text-xs font-bold text-slate-700">Feedback soal ${index + 1}<textarea id="questionFeedback_${submission.id}_${index}" rows="2" class="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Tulis masukan untuk soal ini...">${escapeHtml(review.feedback || '')}</textarea></label></div>`
             : `<div class="mt-3 rounded-lg bg-emerald-50 p-3 text-xs"><p class="font-bold text-emerald-900">Nilai soal: ${escapeHtml(review.score ?? '-')}</p><p class="mt-1 whitespace-pre-wrap text-emerald-800">${escapeHtml(review.feedback || 'Tidak ada feedback per soal.')}</p></div>`;
@@ -2057,38 +2275,55 @@ function renderGuruView() {
         }
 
         const groupHeader = (sub) => `<div class="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3"><p class="text-[10px] font-black uppercase text-indigo-700">${escapeHtml(getClassName(sub.classId))} · ${escapeHtml(sub.taskType || 'Tugas')}</p><p class="text-sm font-extrabold text-slate-900 mt-1">${escapeHtml(sub.taskTitle || 'Tanpa judul')}</p></div>`;
-        const pendingMarkup = pendingSubmissions.map((sub, index) => `
+        const pendingMarkup = pendingSubmissions.map((sub, index) => {
+            const aiSuggestion = gradingSuggestionCache.get(String(sub.id));
+            const reviewDraft = aiSuggestion?.status === 'ready' ? {
+                ...sub,
+                aiScore: aiSuggestion.finalScore,
+                aiReview: aiSuggestion.overallFeedback,
+                questionReviews: aiSuggestion.questionReviews
+            } : sub;
+            const scoreValue = aiSuggestion?.status === 'ready' ? aiSuggestion.finalScore : '';
+            const aiStatusMarkup = aiSuggestion?.status === 'processing'
+                ? '<p class="text-xs font-semibold text-indigo-700">AI sedang menilai jawaban dan foto...</p>'
+                : aiSuggestion?.status === 'error'
+                    ? `<p class="text-xs text-rose-700">${escapeHtml(aiSuggestion.error || 'Penilaian AI gagal.')}</p>`
+                    : aiSuggestion?.status === 'ready'
+                        ? `<p class="text-xs font-semibold text-emerald-700">Saran AI siap · keyakinan ${escapeHtml(aiSuggestion.confidence)}</p>`
+                        : '<p class="text-xs text-slate-500">Menunggu analisis AI.</p>';
+            return `
             ${index === 0 || `${pendingSubmissions[index - 1].classId}-${pendingSubmissions[index - 1].taskType}-${pendingSubmissions[index - 1].taskTitle}` !== `${sub.classId}-${sub.taskType}-${sub.taskTitle}` ? groupHeader(sub) : ''}
             <div class="bg-slate-50 rounded-2xl p-6 border border-slate-200 space-y-4">
                 <div class="flex justify-between items-start">
                     <div>
-                        <span class="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase">${sub.taskType} - ${sub.taskTitle}</span>
-                        <h4 class="text-base font-extrabold text-slate-900 mt-2">${sub.nama}</h4>
-                        <p class="text-[10px] text-slate-500 mt-1">Waktu: ${sub.timestamp}</p>
+                        <span class="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase">${escapeHtml(sub.taskType)} - ${escapeHtml(sub.taskTitle)}</span>
+                        <h4 class="text-base font-extrabold text-slate-900 mt-2">${escapeHtml(sub.nama)}</h4>
+                        <p class="text-[10px] text-slate-500 mt-1">Waktu: ${escapeHtml(sub.timestamp || '-')}</p>
                     </div>
                     <div class="text-right">
-                        <span class="text-[10px] text-slate-400 block font-bold mb-1">Skor AI: <span class="text-blue-600">${sub.aiScore}</span></span>
-                        <input type="number" id="finalScore_${sub.id}" value="${sub.aiScore !== '...' ? sub.aiScore : ''}" class="text-2xl font-black w-24 text-right bg-white border-2 border-indigo-200 rounded-lg focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 outline-none px-2 py-1 text-indigo-700 transition" placeholder="0">
-                        <span class="text-[10px] text-indigo-500 block font-bold mt-1">Nilai Akhir (Bisa Diedit)</span>
+                        <span class="text-[10px] text-slate-400 block font-bold mb-1">Saran skor AI: <span class="text-blue-600">${scoreValue === '' ? '-' : escapeHtml(scoreValue)}</span></span>
+                        <input type="number" id="finalScore_${sub.id}" min="0" max="100" step="0.5" value="${scoreValue === '' ? '' : escapeHtml(scoreValue)}" class="text-2xl font-black w-24 text-right bg-white border-2 border-indigo-200 rounded-lg focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 outline-none px-2 py-1 text-indigo-700 transition" placeholder="0">
+                        <span class="text-[10px] text-indigo-500 block font-bold mt-1">Nilai akhir (dapat dikoreksi)</span>
                     </div>
                 </div>
 
-                ${getTaskReviewMarkup(sub)}
+                <div class="rounded-xl border border-indigo-100 bg-indigo-50 p-3 space-y-2">
+                    ${aiStatusMarkup}
+                    <button type="button" onclick="retryPendingSubmissionGrading('${escapeHtml(sub.id)}')" ${aiSuggestion?.status === 'processing' ? 'disabled' : ''} class="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60">${aiSuggestion?.status === 'ready' ? 'Analisis ulang dengan AI' : aiSuggestion?.status === 'error' ? 'Coba lagi dengan AI' : 'Jalankan penilaian AI'}</button>
+                    ${aiSuggestion?.status === 'ready' ? `<p class="whitespace-pre-wrap text-xs text-indigo-900">${escapeHtml(aiSuggestion.overallFeedback || '')}</p>` : ''}
+                </div>
+
+                ${getTaskReviewMarkup(reviewDraft)}
                 ${getTaskForSubmission(sub)?.questions?.length ? '' : `<div class="bg-white p-4 rounded-xl border border-slate-200 text-xs"><p class="font-bold text-slate-700">Jawaban Siswa:</p><p class="mt-1 whitespace-pre-wrap text-slate-600">${escapeHtml(sub.jawaban || '-')}</p>${getSubmissionAttachmentsMarkup(sub)}</div>`}
 
                 ${sub.cheatCount > 0 || sub.taskType === 'Evaluasi' ? `
                 <div class="${sub.cheatCount > 0 ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'} p-3 rounded-xl border text-xs font-semibold">
-                    🚨 Log Pindah Tab: <span class="font-bold">${sub.cheatCount} kali terdeteksi</span>
+                    Log Pindah Tab: <span class="font-bold">${Number(sub.cheatCount) || 0} kali terdeteksi</span>
                 </div>` : ''}
 
-                <div class="bg-indigo-50 border border-indigo-100 p-4 rounded-xl text-xs space-y-1 mb-2">
-                    <p class="font-bold text-indigo-900">✨ Analisis AI:</p>
-                    <p class="text-indigo-800 font-medium">${sub.aiReview}</p>
-                </div>
-
                 <div>
-                    <label class="block text-[11px] font-bold text-slate-700 mb-1">Berikan Catatan Akhir (Untuk Siswa):</label>
-                    <textarea id="reviewNote_${sub.id}" class="w-full p-3 rounded-xl border border-slate-300 text-xs outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Ketik apresiasi atau perbaikan..."></textarea>
+                    <label class="block text-[11px] font-bold text-slate-700 mb-1">Feedback akhir guru:</label>
+                    <textarea id="reviewNote_${sub.id}" rows="3" class="w-full p-3 rounded-xl border border-slate-300 text-xs outline-none focus:ring-2 focus:ring-emerald-500" placeholder="Periksa dan koreksi feedback AI sebelum memublikasikan...">${escapeHtml(aiSuggestion?.status === 'ready' ? aiSuggestion.overallFeedback || '' : '')}</textarea>
                 </div>
                 
                 <button onclick="publishReview(${sub.id})" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-xs transition shadow-md mt-2">
@@ -2097,8 +2332,8 @@ function renderGuruView() {
                 <button onclick="deleteSubmission(${sub.id})" class="w-full bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold py-2.5 rounded-xl text-xs transition">
                     Hapus Kiriman
                 </button>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
         const reviewedMarkup = reviewedSubmissions.map((sub, index) => `
             ${index === 0 || `${reviewedSubmissions[index - 1].classId}-${reviewedSubmissions[index - 1].taskType}-${reviewedSubmissions[index - 1].taskTitle}` !== `${sub.classId}-${sub.taskType}-${sub.taskTitle}` ? groupHeader(sub) : ''}
             <div class="bg-emerald-50/60 rounded-2xl p-5 border border-emerald-100"><div class="flex flex-wrap items-start justify-between gap-3"><div><h4 class="font-extrabold text-slate-900">${escapeHtml(sub.nama)}</h4><p class="text-xs text-slate-500 mt-1">${escapeHtml(sub.email || '-')} · ${escapeHtml(sub.timestamp || '-')}</p></div><span class="text-2xl font-black text-emerald-700">${escapeHtml(sub.finalScore ?? sub.aiScore ?? '-')}</span></div><div class="mt-3 space-y-3">${getTaskReviewMarkup(sub)}${getTaskForSubmission(sub)?.questions?.length ? '' : `<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Jawaban Siswa</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.jawaban || '-')}</p>${getSubmissionAttachmentsMarkup(sub)}</div>`}<div class="bg-white rounded-xl p-3 border border-emerald-100"><p class="text-[10px] font-black uppercase text-emerald-700">Nilai & Feedback Keseluruhan</p><p class="text-sm text-slate-700 mt-1 whitespace-pre-wrap">${escapeHtml(sub.teacherNote || 'Belum ada feedback')}</p></div></div><button onclick="deleteReviewedSubmission(${sub.id})" class="w-full mt-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold py-2.5 rounded-xl text-xs transition">Hapus Nilai & Feedback</button></div>
@@ -2226,8 +2461,8 @@ async function submitSiswaWork(type, confirmed = false) {
         timestamp: new Date().toLocaleString('id-ID'),
         cheatCount: session?.cheatCount || 0,
         status: 'pending',
-        aiScore: "...",
-        aiReview: "Sedang diproses AI..."
+        aiScore: null,
+        aiReview: 'Menunggu penilaian AI dari halaman guru.'
     };
 
     try {
@@ -2251,19 +2486,6 @@ async function submitSiswaWork(type, confirmed = false) {
         .forEach(notification => dismissStudentNotification(notification.id));
     saveState();
     renderSiswaView();
-
-    // Simulate AI grading logic asynchronously
-    setTimeout(() => {
-        const graded = state.studentSubmissions.find(s => s.id === submission.id);
-        if (graded) {
-            graded.aiScore = Math.floor(Math.random() * 20) + 80;
-            graded.aiReview = "Berdasarkan analisis algoritma AI: Langkah penyelesaian logis dan penerapan rumus Pythagoras tepat.";
-            updateSubmissionInFirestore(graded.id, { aiScore: graded.aiScore, aiReview: graded.aiReview }).catch(error => {
-                console.error('Gagal menyinkronkan analisis kiriman:', error);
-            });
-            saveState();
-        }
-    }, 2000);
 
     customAlert(`✅ Jawaban ${type} berhasil dikirimkan!\nGuru akan meninjau hasil dan memberikan nilai. Pantau tab 'Hasil & Review'.`, "Berhasil Terkirim");
     closeStudentTask(type);
