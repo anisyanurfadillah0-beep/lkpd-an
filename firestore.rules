@@ -143,6 +143,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /answerKeys/{doc} {
+      allow read: if isSignedIn()
+        && roleOf(request.auth.uid) in ['teacher', 'admin'];
+      allow write: if false;
+    }
+
     match /appData/{documentId} {
       allow read: if isSignedIn() && isValidRole(roleOf(request.auth.uid));
       allow write: if isSignedIn()
