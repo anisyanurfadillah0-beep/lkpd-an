@@ -956,7 +956,7 @@ function renderAdminView() {
     if (!panelTitle || !panelContent) return;
     ensureClassAccessCodes();
     const selected = location.hash?.replace('#', '') || 'dashboard';
-    const titles = { dashboard: 'Ringkasan Pengelolaan Sistem', konten: 'Konten Web, Kelas & Materi', email: 'Pengumuman Pengguna', akun: 'Akun Firebase', backup: 'Backup & Data Sistem' };
+    const titles = { dashboard: 'Ringkasan Pengelolaan Sistem', konten: 'Konten Web, Kelas & Materi', tugas: 'Pengelolaan LKPD & Soal', email: 'Pengumuman Pengguna', akun: 'Akun Firebase', backup: 'Backup & Data Sistem' };
     panelTitle.innerText = titles[selected] || titles.dashboard;
     if (panelAction) {
         panelAction.innerText = selected === 'backup' || selected === 'dashboard' ? 'Backup Semua Data' : 'Kelola Sekarang';
@@ -964,6 +964,13 @@ function renderAdminView() {
     }
     panelContent.className = 'space-y-5';
     panelContent.innerHTML = adminPanelMarkup(selected);
+    if (selected === 'tugas') {
+        ['Lkpd', 'Latihan', 'Evaluasi'].forEach(type => {
+            const container = document.getElementById(`form${type}Questions`);
+            if (container && container.children.length === 0) addQuestionField(type);
+        });
+        renderGuruView();
+    }
 
     navs.forEach(link => {
         const key = link.dataset.adminPanel;
@@ -973,8 +980,31 @@ function renderAdminView() {
     });
 }
 
+function adminTaskFormMarkup(type, label, accent) {
+    const isLinkedTask = type !== 'Lkpd';
+    return `<section class='rounded-2xl border border-slate-200 bg-white p-5'>
+        <div class='mb-4 flex items-center gap-2'><span class='rounded bg-${accent}-100 px-2.5 py-1 text-[10px] font-black uppercase text-${accent}-700'>${label}</span><h4 class='text-base font-extrabold text-slate-900'>Buat & Kelola ${label}</h4></div>
+        <form onsubmit='saveNewTask(event, "${type}")' class='space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4'>
+            <div><label class='mb-1 block text-xs font-bold text-slate-700'>Kelas:</label><select id='form${type}Class' required ${isLinkedTask ? `onchange="renderLinkedLkpdOptions('${type}')"` : ''} class='w-full rounded-xl border border-slate-300 p-3 text-sm'></select></div>
+            <div><label class='mb-1 block text-xs font-bold text-slate-700'>${type === 'Lkpd' ? 'Label Pertemuan:' : `Label ${label}:`}</label><input id='form${type}Title' required class='w-full rounded-xl border border-slate-300 p-3 text-sm' placeholder='Masukkan judul ${label.toLowerCase()}'></div>
+            ${isLinkedTask ? `<div><label class='mb-1 block text-xs font-bold text-slate-700'>LKPD prasyarat:</label><select id='form${type}Lkpd' required class='w-full rounded-xl border border-slate-300 p-3 text-sm'></select></div>` : ''}
+            <div class='grid gap-3 sm:grid-cols-2'><div><label class='mb-1 block text-xs font-bold text-slate-700'>Waktu dibuka:</label><input type='datetime-local' id='form${type}Open' required class='w-full rounded-xl border border-slate-300 p-3 text-sm'></div><div><label class='mb-1 block text-xs font-bold text-slate-700'>Batas waktu:</label><input type='datetime-local' id='form${type}Close' required class='w-full rounded-xl border border-slate-300 p-3 text-sm'></div></div>
+            <div class='border-t border-slate-200 pt-3'><label class='mb-1 block text-xs font-bold text-slate-700'>Prompt AI (opsional):</label><div class='flex gap-2'><input id='form${type}Prompt' class='min-w-0 flex-1 rounded-xl border border-slate-300 p-3 text-sm' placeholder='Instruksi untuk membuat soal'><button type='button' onclick='generateSoalAI("${type}")' class='rounded-xl bg-${accent}-600 px-4 py-2 text-xs font-bold text-white'>Generate</button></div></div>
+            <div><div class='mb-2 flex items-center justify-between'><label class='text-xs font-bold text-slate-700'>Daftar soal:</label><button type='button' onclick='addQuestionField("${type}")' class='text-xs font-bold text-${accent}-700'>+ Tambah Soal</button></div><div id='form${type}Questions' class='space-y-3'></div></div>
+            <button type='submit' class='rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white'>Simpan ${label}</button>
+        </form>
+        <h5 class='mb-3 mt-5 text-sm font-extrabold text-slate-900'>${label} yang tersedia</h5><div id='guru${type}ListContainer' class='space-y-3'></div>
+    </section>`;
+}
+
 function adminPanelMarkup(panel) {
     const input = 'w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-rose-400';
+    if (panel === 'tugas') return `<div class='space-y-5'>
+        <p class='text-sm text-slate-600'>Kelola soal pembelajaran per kelas. Latihan dan evaluasi memiliki prasyarat LKPD yang dipilih.</p>
+        ${adminTaskFormMarkup('Lkpd', 'LKPD', 'purple')}
+        ${adminTaskFormMarkup('Latihan', 'Latihan Soal', 'emerald')}
+        ${adminTaskFormMarkup('Evaluasi', 'Evaluasi', 'rose')}
+    </div>`;
     if (panel === 'konten') return `<div class='grid lg:grid-cols-2 gap-5'>
         <form onsubmit='adminSaveClass(event)' class='bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3'><h4 class='font-black'>Tambah / Edit Kelas</h4><input id='adminClassName' required class='${input}' placeholder='Nama kelas'><textarea id='adminClassDescription' class='${input}' rows='2' placeholder='Deskripsi kelas'></textarea><button class='bg-slate-900 text-white font-bold px-4 py-2 rounded-xl text-xs'>Simpan Kelas</button></form>
         <form onsubmit='adminSaveMaterial(event)' class='bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3'><h4 class='font-black'>Tambah Materi ke Kelas</h4><select id='adminMaterialClass' required class='${input}'>${state.classes.map(c => `<option value='${c.id}'>${c.nama}</option>`).join('')}</select><input id='adminMaterialTitle' required class='${input}' placeholder='Judul materi'><textarea id='adminMaterialDescription' required class='${input}' rows='2' placeholder='Deskripsi materi'></textarea><input id='adminMaterialLink' class='${input}' placeholder='Link dokumen / video (opsional)'><button class='bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs'>Simpan Materi</button></form>
@@ -1003,6 +1033,7 @@ function switchAdminPanel(panelKey) {
     const adminMap = {
         dashboard: 'dashboard',
         konten: 'konten',
+        tugas: 'tugas',
         email: 'email',
         akun: 'akun',
         backup: 'backup'
@@ -2501,6 +2532,11 @@ function deleteMateri(id) {
     });
 }
 
+function renderTaskManagementView() {
+    if (normalizeRole(state.currentUser?.role) === 'admin') renderAdminView();
+    else renderGuruView();
+}
+
 async function saveNewTask(e, type) {
     e.preventDefault();
     const editors = [...document.querySelectorAll(`#form${type}Questions .question-editor`)];
@@ -2600,13 +2636,15 @@ async function saveNewTask(e, type) {
     }
     e.target.reset();
     if (submitButton) submitButton.disabled = false;
-    renderGuruView();
+    renderTaskManagementView();
 }
 
 function editTask(type, id) {
     const task = state.taskList[type].find(item => item.id === id);
     const form = document.querySelector(`#form${type}Title`)?.closest('form');
     if (!task || !form) return;
+    const isAdmin = normalizeRole(state.currentUser?.role) === 'admin';
+    if (isAdmin && location.hash !== '#tugas') switchAdminPanel('tugas');
     document.getElementById(`form${type}Title`).value = task.title;
     document.getElementById(`form${type}Open`).value = task.openDate;
     document.getElementById(`form${type}Close`).value = task.closeDate;
@@ -2616,7 +2654,7 @@ function editTask(type, id) {
     questions.innerHTML = '';
     task.questions.forEach(question => addQuestionField(type, question));
     form.dataset.editingId = id;
-    switchTeacherTab(type.toLowerCase());
+    if (!isAdmin) switchTeacherTab(type.toLowerCase());
 }
 
 function deleteSubmission(id) {
@@ -2734,7 +2772,7 @@ function deleteTask(type, id) {
         state.taskList[type] = state.taskList[type].filter(t => t.id !== id);
         removeContentNotification(id, type);
         await saveLearningContent();
-        renderGuruView();
+        renderTaskManagementView();
     });
 }
 
@@ -2822,7 +2860,7 @@ window.addEventListener('hashchange', () => {
     }
     if (normalizeRole(state.currentUser?.role) === 'admin' && window.location.pathname.endsWith('dashboard_admin.html')) {
         const selected = window.location.hash.replace('#', '') || 'dashboard';
-        if (['dashboard', 'konten', 'email', 'akun', 'device', 'backup'].includes(selected)) {
+        if (['dashboard', 'konten', 'tugas', 'email', 'akun', 'device', 'backup'].includes(selected)) {
             renderAdminView();
         }
     }
