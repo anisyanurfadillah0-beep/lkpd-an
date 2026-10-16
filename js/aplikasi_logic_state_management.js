@@ -8,6 +8,7 @@ const firebaseConfig = {
     appId: '1:693641664602:web:89b440a62a9c7bd345e063',
     measurementId: 'G-B3F0SPSMPW'
 };
+const firebaseAppCheckSiteKey = window.__FIREBASE_APPCHECK_SITE_KEY__ || '';
 
 const DEFAULT_ROLE = 'student';
 const LEGAL_ROLES = new Set(['student', 'teacher', 'admin']);
@@ -31,6 +32,7 @@ function normalizeRole(role) {
 }
 
 let firebaseReady = false;
+let firebaseAppCheckInitialized = false;
 let firebaseAuth = null;
 let firebaseDb = null;
 let submissionsUnsubscribe = null;
@@ -89,10 +91,33 @@ function initializeFirebaseClient() {
         firebase.initializeApp(firebaseConfig);
     }
 
+    initializeFirebaseAppCheck();
+
     firebaseReady = true;
     firebaseAuth = firebase.auth();
     firebaseDb = firebase.firestore();
     return true;
+}
+
+function initializeFirebaseAppCheck() {
+    if (firebaseAppCheckInitialized) return;
+    if (!firebase.appCheck || !firebaseAppCheckSiteKey) {
+        console.warn('Firebase App Check belum aktif. Set RECAPTCHA_ENTERPRISE_SITE_KEY di environment Vercel.');
+        return;
+    }
+
+    try {
+        const appCheck = firebase.appCheck();
+        firebaseAppCheckInitialized = true;
+        appCheck.activate(new firebase.appCheck.ReCaptchaEnterpriseProvider(firebaseAppCheckSiteKey), true)
+            .catch(error => {
+                firebaseAppCheckInitialized = false;
+                console.error('Gagal mengaktifkan Firebase App Check debug:', error);
+            });
+    } catch (error) {
+        firebaseAppCheckInitialized = false;
+        console.error('Gagal menginisialisasi Firebase App Check debug:', error);
+    }
 }
 
 initializeFirebaseClient();
