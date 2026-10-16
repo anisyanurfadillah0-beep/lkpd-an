@@ -1,3 +1,8 @@
+// Firebase's CDN App Check bundle expects the build-time process.env value.
+if (typeof globalThis.process === 'undefined') {
+    globalThis.process = { env: { NODE_ENV: 'production' } };
+}
+
 // GLOBAL STATE & PERSISTENT IN-MEMORY STORE
 const firebaseConfig = {
     apiKey: 'AIzaSyBwTQpzYj_ylfDVNLnLIhS_Db9y0560O5Y',
