@@ -55,6 +55,24 @@ function parseImageDataUrl(dataUrl) {
     return { mimeType: match[1].toLowerCase(), data: match[2] };
 }
 
+function getLegacyAnswersByQuestion(submission) {
+    const answersByQuestion = new Map();
+    const legacyText = String(submission.jawaban || '');
+    legacyText.split(/\r?\n\s*\r?\n/).forEach(block => {
+        const match = block.match(/^Soal\s+(\d+)\s*:\s*([\s\S]*)$/i);
+        if (match) answersByQuestion.set(Number(match[1]) - 1, match[2].trim());
+    });
+    return answersByQuestion;
+}
+
+function generateContentWithTimeout(model, parts, timeoutMs = 90000) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Penilaian AI melewati batas waktu 90 detik. Coba lagi sebentar lagi.')), timeoutMs);
+    });
+    return Promise.race([model.generateContent(parts), timeout]).finally(() => clearTimeout(timeoutId));
+}
+
 function validateGradingResult(result, questionCount) {
     if (!Number.isFinite(result.finalScore) || result.finalScore < 0 || result.finalScore > 100) {
         throw new Error('AI mengembalikan nilai akhir di luar rentang 0-100.');
@@ -100,21 +118,38 @@ window.gradeSubmissionWithGemini = async ({ task, submission, rubric, answerKey 
             options: question.options || []
         };
     });
-    const answers = Array.isArray(submission.questionAnswers) ? submission.questionAnswers : [];
-    const normalizedAnswers = answers.map((answer, questionIndex) => {
-        const question = questions[questionIndex];
-        let answerText = String(answer.answer || '');
+    const answers = Array.isArray(submission.questionAnswers)
+        ? submission.questionAnswers
+        : Array.isArray(submission.answers) ? submission.answers : [];
+    const legacyAnswers = getLegacyAnswersByQuestion(submission);
+    const attachments = Array.isArray(submission.attachments) ? submission.attachments : [];
+    const normalizedAnswers = questions.map((question, questionIndex) => {
+        const answer = answers[questionIndex];
+        let answerText = typeof answer === 'string'
+            ? answer
+            : String(answer?.answer ?? answer?.text ?? answer?.jawaban ?? '');
+        if (!answerText.trim()) answerText = legacyAnswers.get(questionIndex) || '';
+        const hasPhotoAnswer = attachments.some(attachment => Number(attachment.questionIndex) === questionIndex);
+        if (hasPhotoAnswer && (!answerText.trim() || answerText.trim() === '[Lampiran File]')) {
+            answerText = '[Jawaban berupa foto terlampir. Periksa foto ini sebelum menyimpulkan tidak ada jawaban.]';
+        }
         if (question?.type === 'choice' && /^\d+$/.test(answerText)) {
             const optionIndex = Number(answerText);
             const option = question.options[optionIndex];
             if (option !== undefined) answerText = `Opsi ${String.fromCharCode(65 + optionIndex)}: ${option}`;
         }
-        return { questionIndex, answer: answerText, fileName: answer.fileName || '' };
+        return {
+            questionIndex,
+            answer: answerText.trim() || '[Tidak ada jawaban teks atau foto yang tersimpan untuk nomor ini.]',
+            fileName: typeof answer === 'object' && answer ? answer.fileName || '' : '',
+            hasPhotoAnswer
+        };
     });
     const prompt = [
         'Nilai pekerjaan berikut menggunakan rubrik dengan total 100 poin.',
         'Berikan questionReviews.score berupa persentase penguasaan 0-100 untuk setiap soal. finalScore harus berupa total berbobot 0-100 sesuai poin maksimum dalam rubrik, bukan rata-rata sederhana jika bobot berbeda.',
         'Jangan mengarang langkah kerja yang tidak tampak. Kunci dan rubrik hanya untuk keperluan penilaian.',
+        'Periksa jawaban teks dan setiap foto lampiran. Jangan menyatakan jawaban tidak diserahkan jika ada foto jawaban; nilai isi foto sesuai nomor soalnya.',
         `Judul tugas: ${task.title || submission.taskTitle || 'Tugas matematika'}`,
         `Soal: ${JSON.stringify(questions)}`,
         `Jawaban siswa per nomor: ${JSON.stringify(normalizedAnswers)}`,
@@ -129,12 +164,12 @@ window.gradeSubmissionWithGemini = async ({ task, submission, rubric, answerKey 
         const image = parseImageDataUrl(question.image);
         if (image) parts.push({ text: `Gambar soal nomor ${questionIndex + 1}:` }, { inlineData: image });
     });
-    (submission.attachments || []).forEach(attachment => {
+    attachments.forEach(attachment => {
         const image = parseImageDataUrl(attachment.url);
         if (image) parts.push({ text: `Foto jawaban siswa untuk nomor ${Number(attachment.questionIndex) + 1}:` }, { inlineData: image });
     });
 
-    const response = await model.generateContent(parts);
+    const response = await generateContentWithTimeout(model, parts);
     let result;
     try {
         result = JSON.parse(response.response.text());

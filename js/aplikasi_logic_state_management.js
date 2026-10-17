@@ -254,6 +254,7 @@ const gradingSuggestionCache = new Map();
 const gradingRunsInFlight = new Set();
 let gradingSuggestionsUnsubscribe = null;
 let gradingQueueRunning = false;
+let gradingQueueRecoveryTimer = null;
 
 Object.keys(state.taskList).forEach(type => {
     state.taskList[type] = state.taskList[type].map(task => ({
@@ -506,6 +507,9 @@ function watchStudentSubmissions() {
         if (role === 'teacher' || role === 'admin') {
             renderGuruView();
             queuePendingSubmissionGrading();
+            if (role === 'teacher' && !gradingQueueRecoveryTimer) {
+                gradingQueueRecoveryTimer = window.setInterval(queuePendingSubmissionGrading, 60 * 1000);
+            }
         }
         else renderSiswaView();
     }, error => {
