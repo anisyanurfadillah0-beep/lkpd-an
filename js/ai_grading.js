@@ -5,7 +5,6 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.
 const outputSchema = {
     type: 'object',
     properties: {
-        finalScore: { type: 'number' },
         overallFeedback: { type: 'string' },
         confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
         questionReviews: {
@@ -21,7 +20,7 @@ const outputSchema = {
             }
         }
     },
-    required: ['finalScore', 'overallFeedback', 'confidence', 'questionReviews']
+    required: ['overallFeedback', 'confidence', 'questionReviews']
 };
 
 let gradingRuntime = null;
@@ -74,30 +73,34 @@ function generateContentWithTimeout(model, parts, timeoutMs = 90000) {
 }
 
 function validateGradingResult(result, questionCount) {
-    if (!Number.isFinite(result.finalScore) || result.finalScore < 0 || result.finalScore > 100) {
-        throw new Error('AI mengembalikan nilai akhir di luar rentang 0-100.');
-    }
     if (!['high', 'medium', 'low'].includes(result.confidence)) {
         throw new Error('AI tidak mengembalikan tingkat keyakinan yang valid.');
     }
-    if (!Array.isArray(result.questionReviews) || result.questionReviews.length !== questionCount) {
+    if (questionCount === 0 || !Array.isArray(result.questionReviews) || result.questionReviews.length !== questionCount) {
         throw new Error('Jumlah feedback AI tidak sesuai jumlah soal.');
     }
 
-    const questionReviews = result.questionReviews.map((review, index) => {
+    const seenQuestionIndexes = new Set();
+    const questionReviews = result.questionReviews.map((review, responseIndex) => {
+        const questionIndex = Number.isInteger(review.questionIndex) ? review.questionIndex : responseIndex;
+        if (questionIndex < 0 || questionIndex >= questionCount || seenQuestionIndexes.has(questionIndex)) {
+            throw new Error('Indeks soal pada feedback AI tidak valid atau berulang.');
+        }
         const score = Number(review.score);
         if (!Number.isFinite(score) || score < 0 || score > 100 || !String(review.feedback || '').trim()) {
-            throw new Error(`Feedback AI untuk soal ${index + 1} tidak lengkap atau nilainya tidak valid.`);
+            throw new Error(`Feedback AI untuk soal ${questionIndex + 1} tidak lengkap atau nilainya tidak valid.`);
         }
+        seenQuestionIndexes.add(questionIndex);
         return {
-            questionIndex: index,
+            questionIndex,
             score,
             feedback: String(review.feedback).trim()
         };
-    });
+    }).sort((left, right) => left.questionIndex - right.questionIndex);
+    const finalScore = questionReviews.reduce((total, review) => total + review.score, 0) / questionCount;
 
     return {
-        finalScore: Number(result.finalScore.toFixed(2)),
+        finalScore: Number(finalScore.toFixed(2)),
         overallFeedback: String(result.overallFeedback || '').trim(),
         confidence: result.confidence,
         questionReviews
@@ -146,8 +149,8 @@ window.gradeSubmissionWithGemini = async ({ task, submission, rubric, answerKey 
         };
     });
     const prompt = [
-        'Nilai pekerjaan berikut menggunakan rubrik dengan total 100 poin.',
-        'Berikan questionReviews.score berupa persentase penguasaan 0-100 untuk setiap soal. finalScore harus berupa total berbobot 0-100 sesuai poin maksimum dalam rubrik, bukan rata-rata sederhana jika bobot berbeda.',
+        'Nilai setiap soal menggunakan persentase penguasaan 0-100 berdasarkan rubrik.',
+        'Berikan hanya skor dan feedback per soal. Aplikasi akan menghitung nilai akhir sebagai rata-rata skor seluruh soal dengan bobot sama; jangan keluarkan nilai akhir terpisah.',
         'Jangan mengarang langkah kerja yang tidak tampak. Kunci dan rubrik hanya untuk keperluan penilaian.',
         'Periksa jawaban teks dan setiap foto lampiran. Jangan menyatakan jawaban tidak diserahkan jika ada foto jawaban; nilai isi foto sesuai nomor soalnya.',
         `Judul tugas: ${task.title || submission.taskTitle || 'Tugas matematika'}`,

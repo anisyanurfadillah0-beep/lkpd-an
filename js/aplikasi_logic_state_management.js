@@ -1981,7 +1981,7 @@ async function gradePendingSubmissionWithAI(submissionId, retry = false) {
             const existing = snapshot.exists ? snapshot.data() : null;
             const updatedAt = existing?.updatedAt?.toMillis?.() || 0;
             const processingIsRecent = existing?.status === 'processing' && Date.now() - updatedAt < 5 * 60 * 1000;
-            if (existing?.status === 'ready' || processingIsRecent || (existing?.status === 'error' && !retry)) {
+            if ((existing?.status === 'ready' && !retry) || processingIsRecent || (existing?.status === 'error' && !retry)) {
                 return { claimed: false, suggestion: existing };
             }
 
