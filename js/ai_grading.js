@@ -1,6 +1,5 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import { getAuth } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app-check.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-ai.js';
 
 const outputSchema = {
@@ -34,16 +33,13 @@ function getGradingModel() {
     if (!config?.apiKey || !config?.projectId || !config?.appId) {
         throw new Error('Konfigurasi Firebase belum siap untuk penilaian AI.');
     }
-    if (!siteKey) {
+    const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+    if (!isLocalhost && !siteKey) {
         throw new Error('App Check belum siap. Pastikan RECAPTCHA_ENTERPRISE_SITE_KEY tersedia di Vercel.');
     }
 
     const app = initializeApp(config);
     const auth = getAuth(app);
-    initializeAppCheck(app, {
-        provider: new ReCaptchaEnterpriseProvider(siteKey),
-        isTokenAutoRefreshEnabled: true
-    });
     const ai = getAI(app, { backend: new GoogleAIBackend() });
     const model = getGenerativeModel(ai, {
         model: 'gemini-3.8-flash',
@@ -96,6 +92,10 @@ function validateGradingResult(result, questionCount) {
 }
 
 window.gradeSubmissionWithGemini = async ({ task, submission, rubric, answerKey }) => {
+    const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+    if (!isLocalhost && !(await window.mathlearnAppCheckReady)) {
+        throw new Error('Firebase App Check belum berhasil diinisialisasi. Periksa site key dan konfigurasi reCAPTCHA Enterprise.');
+    }
     const { model, auth } = getGradingModel();
     await auth.authStateReady();
     if (!auth.currentUser) throw new Error('Sesi guru sudah berakhir. Login kembali untuk menilai kiriman.');

@@ -14,7 +14,6 @@ const firebaseConfig = {
     measurementId: 'G-B3F0SPSMPW'
 };
 window.mathlearnFirebaseConfig = firebaseConfig;
-const firebaseAppCheckSiteKey = window.__FIREBASE_APPCHECK_SITE_KEY__ || '';
 
 const DEFAULT_ROLE = 'student';
 const LEGAL_ROLES = new Set(['student', 'teacher', 'admin']);
@@ -38,7 +37,7 @@ function normalizeRole(role) {
 }
 
 let firebaseReady = false;
-let firebaseAppCheckInitialized = false;
+let firebaseAppCheckInitializationPromise = null;
 let firebaseAuth = null;
 let firebaseDb = null;
 let submissionsUnsubscribe = null;
@@ -106,23 +105,48 @@ function initializeFirebaseClient() {
 }
 
 function initializeFirebaseAppCheck() {
-    if (firebaseAppCheckInitialized) return;
-    if (!firebase.appCheck || !firebaseAppCheckSiteKey) {
-        console.warn('Firebase App Check belum aktif. Set RECAPTCHA_ENTERPRISE_SITE_KEY di environment Vercel.');
+    if (!firebase.appCheck) {
+        console.warn('Firebase App Check SDK tidak tersedia.');
         return;
+    }
+
+    const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+    const siteKey = isLocalhost ? '' : String(window.__FIREBASE_APPCHECK_SITE_KEY__ || '').trim();
+    console.log('Firebase App Check site key prefix:', siteKey ? siteKey.slice(0, 6) : '(kosong)');
+
+    if (isLocalhost) {
+        console.info('Firebase App Check localhost debug-token mode; production site key tidak digunakan.');
+    } else if (!siteKey) {
+        window.mathlearnAppCheckReady = Promise.resolve(false);
+        console.warn('Firebase App Check belum aktif. Pastikan RECAPTCHA_ENTERPRISE_SITE_KEY tersedia di environment Vercel.');
+        return;
+    }
+    if (firebaseAppCheckInitializationPromise) {
+        window.mathlearnAppCheckReady = firebaseAppCheckInitializationPromise;
+        return firebaseAppCheckInitializationPromise;
     }
 
     try {
         const appCheck = firebase.appCheck();
-        firebaseAppCheckInitialized = true;
-        appCheck.activate(new firebase.appCheck.ReCaptchaEnterpriseProvider(firebaseAppCheckSiteKey), true)
-            .catch(error => {
-                firebaseAppCheckInitialized = false;
-                console.error('Gagal mengaktifkan Firebase App Check debug:', error);
+        const provider = isLocalhost
+            ? new firebase.appCheck.CustomProvider({
+                getToken: async () => ({ token: '', expireTimeMillis: Date.now() + 60 * 60 * 1000 })
+            })
+            : new firebase.appCheck.ReCaptchaEnterpriseProvider(siteKey);
+        firebaseAppCheckInitializationPromise = appCheck.activate(
+            provider,
+            true
+        ).then(() => true).catch(error => {
+            console.error('Gagal mengaktifkan Firebase App Check:', error);
+            return false;
             });
+        window.mathlearnAppCheckReady = firebaseAppCheckInitializationPromise;
+        return firebaseAppCheckInitializationPromise;
     } catch (error) {
-        firebaseAppCheckInitialized = false;
-        console.error('Gagal menginisialisasi Firebase App Check debug:', error);
+        firebaseAppCheckInitializationPromise = Promise.resolve(false);
+        window.mathlearnAppCheckReady = firebaseAppCheckInitializationPromise;
+        console.error('Gagal menginisialisasi Firebase App Check:', error);
+        return firebaseAppCheckInitializationPromise;
     }
 }
 
