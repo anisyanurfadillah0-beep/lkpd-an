@@ -112,7 +112,6 @@ function initializeFirebaseAppCheck() {
 
     const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
     const siteKey = isLocalhost ? '' : String(window.__FIREBASE_APPCHECK_SITE_KEY__ || '').trim();
-    console.log('Firebase App Check site key prefix:', siteKey ? siteKey.slice(0, 6) : '(kosong)');
 
     if (isLocalhost) {
         console.info('Firebase App Check localhost debug-token mode; production site key tidak digunakan.');
@@ -133,12 +132,30 @@ function initializeFirebaseAppCheck() {
                 getToken: async () => ({ token: '', expireTimeMillis: Date.now() + 60 * 60 * 1000 })
             })
             : new firebase.appCheck.ReCaptchaEnterpriseProvider(siteKey);
-        firebaseAppCheckInitializationPromise = appCheck.activate(
-            provider,
-            true
-        ).then(() => true).catch(error => {
-            console.error('Gagal mengaktifkan Firebase App Check:', error);
-            return false;
+        console.log('Firebase App Check diagnostic:', {
+            provider: isLocalhost ? 'CustomProvider (debug token)' : 'ReCaptchaEnterpriseProvider',
+            siteKeyPrefix: siteKey ? siteKey.slice(0, 6) : '(tidak dipakai)',
+            grecaptchaAvailable: typeof window.grecaptcha !== 'undefined'
+        });
+
+        firebaseAppCheckInitializationPromise = Promise.resolve(appCheck.activate(provider, true))
+            .then(async () => {
+                try {
+                    if (!isLocalhost) {
+                        const executeWrapped = await wrapEnterpriseRecaptchaExecuteForDiagnostics();
+                        console.log('Firebase App Check Enterprise execute diagnostic installed:', executeWrapped);
+                    }
+                    const tokenResult = await appCheck.getToken();
+                    console.log('Firebase App Check grecaptcha after getToken:', typeof window.grecaptcha !== 'undefined');
+                    if (tokenResult?.error) {
+                        logAppCheckTokenError(tokenResult.error);
+                        return false;
+                    }
+                    return true;
+                } catch (error) {
+                    logAppCheckTokenError(error);
+                    return false;
+                }
             });
         window.mathlearnAppCheckReady = firebaseAppCheckInitializationPromise;
         return firebaseAppCheckInitializationPromise;
@@ -148,6 +165,43 @@ function initializeFirebaseAppCheck() {
         console.error('Gagal menginisialisasi Firebase App Check:', error);
         return firebaseAppCheckInitializationPromise;
     }
+}
+
+async function wrapEnterpriseRecaptchaExecuteForDiagnostics() {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+        const enterprise = window.grecaptcha?.enterprise;
+        const execute = enterprise?.execute;
+        if (typeof execute === 'function') {
+            if (execute.mathlearnDiagnosticWrapper) return true;
+            const wrappedExecute = function (...args) {
+                return execute.apply(this, args).catch(error => {
+                    console.error('reCAPTCHA Enterprise execute original error:', {
+                        originalError: error,
+                        serverResponse: error?.serverResponse || error?.response,
+                        error
+                    });
+                    throw error;
+                });
+            };
+            wrappedExecute.mathlearnDiagnosticWrapper = true;
+            enterprise.execute = wrappedExecute;
+            return true;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return false;
+}
+
+function logAppCheckTokenError(error) {
+    console.error('Firebase App Check getToken gagal:', {
+        code: error?.code,
+        message: error?.message,
+        originalError: error?.originalError || error?.customData?.originalError,
+        serverResponse: error?.serverResponse || error?.customData?.serverResponse,
+        customData: error?.customData,
+        error
+    });
 }
 
 initializeFirebaseClient();
