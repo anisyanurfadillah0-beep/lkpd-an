@@ -2054,15 +2054,21 @@ async function queuePendingSubmissionGrading() {
                 if (item.status !== 'pending') return false;
                 const suggestion = gradingSuggestionCache.get(String(item.id));
                 return suggestion?.status !== 'ready'
-                    && suggestion?.status !== 'error'
+                    && (suggestion?.status !== 'error' || isRecoverableAppCheckGradingError(suggestion))
                     && !isGradingSuggestionProcessing(suggestion);
             });
             if (!submission) break;
-            await gradePendingSubmissionWithAI(submission.id);
+            const suggestion = gradingSuggestionCache.get(String(submission.id));
+            await gradePendingSubmissionWithAI(submission.id, isRecoverableAppCheckGradingError(suggestion));
         }
     } finally {
         gradingQueueRunning = false;
     }
+}
+
+function isRecoverableAppCheckGradingError(suggestion) {
+    return suggestion?.status === 'error'
+        && String(suggestion.error || '').includes('Firebase App Check belum berhasil diinisialisasi.');
 }
 
 function isGradingSuggestionProcessing(suggestion) {

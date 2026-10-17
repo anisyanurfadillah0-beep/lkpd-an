@@ -29,13 +29,8 @@ let gradingRuntime = null;
 function getGradingModel() {
     if (gradingRuntime) return gradingRuntime;
     const config = window.mathlearnFirebaseConfig;
-    const siteKey = window.__FIREBASE_APPCHECK_SITE_KEY__;
     if (!config?.apiKey || !config?.projectId || !config?.appId) {
         throw new Error('Konfigurasi Firebase belum siap untuk penilaian AI.');
-    }
-    const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-    if (!isLocalhost && !siteKey) {
-        throw new Error('App Check belum siap. Pastikan RECAPTCHA_ENTERPRISE_SITE_KEY tersedia di Vercel.');
     }
 
     const app = initializeApp(config);
@@ -92,10 +87,6 @@ function validateGradingResult(result, questionCount) {
 }
 
 window.gradeSubmissionWithGemini = async ({ task, submission, rubric, answerKey }) => {
-    const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-    if (!isLocalhost && !(await window.mathlearnAppCheckReady)) {
-        throw new Error('Firebase App Check belum berhasil diinisialisasi. Periksa site key dan konfigurasi reCAPTCHA Enterprise.');
-    }
     const { model, auth } = getGradingModel();
     await auth.authStateReady();
     if (!auth.currentUser) throw new Error('Sesi guru sudah berakhir. Login kembali untuk menilai kiriman.');
