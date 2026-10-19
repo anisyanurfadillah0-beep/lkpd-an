@@ -255,6 +255,7 @@ const gradingRunsInFlight = new Set();
 let gradingSuggestionsUnsubscribe = null;
 let gradingQueueRunning = false;
 let gradingQueueRecoveryTimer = null;
+let taskRubricStatusById = new Map();
 
 Object.keys(state.taskList).forEach(type => {
     state.taskList[type] = state.taskList[type].map(task => ({
@@ -382,7 +383,11 @@ async function loadLearningContent() {
                     state.taskList[type] = content.taskList[type].map(task => ({
                         ...task,
                         questions: Array.isArray(task.questions) && task.questions.length > 0
-                            ? task.questions
+                            ? task.questions.map(question => {
+                                if (!question || typeof question !== 'object') return question;
+                                const { correctAnswer, ...publicQuestion } = question;
+                                return publicQuestion;
+                            })
                             : [task.content || '']
                     }));
                 }
@@ -432,8 +437,8 @@ async function loadLearningContent() {
             state.classes.forEach(classItem => { delete classItem.accessCode; });
         }
         migrateLegacyDefaultClassContent();
-        if (role === 'teacher' || role === 'admin') await loadPrivateAnswerKeysIntoTeacherTasks();
         if (containsPublicAnswerKeys && (role === 'teacher' || role === 'admin')) await saveLearningContent();
+        if (role === 'teacher' || role === 'admin') await loadTaskRubricStatuses();
         saveState();
         if ((role === 'teacher' || role === 'admin') && !classAccessCodesSyncAvailable) showClassAccessCodesSyncWarning();
         return true;
@@ -1255,6 +1260,147 @@ function renderAdminView() {
     });
 }
 
+function renderRubricQuestionEditor(editor, rubricData = {}) {
+    const wrap = editor.querySelector('.question-rubric-wrap');
+    if (!wrap) return;
+    const question = normalizeQuestion(editor.querySelector('.question-type')?.value
+        ? { type: editor.querySelector('.question-type').value }
+        : {});
+    const rubricType = rubricData.type || (question.type === 'choice' ? 'choice' : 'essay');
+    const options = [...editor.querySelectorAll('.question-option')].map(input => input.value.trim()).filter(Boolean);
+    const answerOptions = options.map((option, index) => `<option value="${String.fromCharCode(65 + index)}" ${rubricData.key === String.fromCharCode(65 + index) ? 'selected' : ''}>${String.fromCharCode(65 + index)} · ${escapeHtml(option)}</option>`).join('');
+    const aspects = Array.isArray(rubricData.aspects) && rubricData.aspects.length ? rubricData.aspects : [{ name: '', points: '' }];
+    wrap.innerHTML = `
+        <div class="border-t border-slate-200 pt-4 space-y-3">
+            <h5 class="rubric-question-title text-xs font-black text-slate-800">Kunci dan Rubrik Penilaian AI · Soal ${[...editor.parentElement.children].indexOf(editor) + 1}</h5>
+            <select class="rubric-type w-full rounded-lg border border-slate-300 p-2.5 text-sm" onchange="toggleRubricQuestionEditor(this)">
+                <option value="choice" ${rubricType === 'choice' ? 'selected' : ''}>Pilihan ganda</option>
+                <option value="essay" ${rubricType === 'essay' ? 'selected' : ''}>Esai</option>
+            </select>
+            <label class="block text-xs font-bold text-slate-700">Poin maksimal
+                <input class="rubric-max-points mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm" type="number" min="1" step="1" value="${escapeHtml(rubricData.maxPoin ?? '')}" placeholder="Contoh: 10" oninput="updateRubricPreview(this)">
+            </label>
+            <div class="rubric-choice-fields space-y-2 ${rubricType === 'choice' ? '' : 'hidden'}">
+                <label class="block text-xs font-bold text-slate-700">Jawaban benar
+                    <select class="rubric-choice-key mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm" onchange="updateRubricPreview(this)"><option value="">Pilih huruf jawaban</option>${answerOptions}</select>
+                </label>
+            </div>
+            <div class="rubric-essay-fields space-y-3 ${rubricType === 'essay' ? '' : 'hidden'}">
+                <label class="block text-xs font-bold text-slate-700">Kunci jawaban lengkap
+                    <textarea class="rubric-essay-key mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm" rows="3" placeholder="Tuliskan hasil dan langkah yang diharapkan" oninput="updateRubricPreview(this)">${escapeHtml(rubricData.key || '')}</textarea>
+                </label>
+                <div><div class="mb-2 flex items-center justify-between"><span class="text-xs font-bold text-slate-700">Aspek penilaian (jumlah poin harus sama dengan maksimal)</span><button type="button" onclick="addRubricAspect(this)" class="text-xs font-bold text-indigo-700">+ Aspek</button></div><div class="rubric-aspects space-y-2">${aspects.map(aspect => rubricAspectMarkup(aspect)).join('')}</div></div>
+                <label class="block text-xs font-bold text-slate-700">Jawaban alternatif yang diterima
+                    <textarea class="rubric-alternatives mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm" rows="2" placeholder="Satu alternatif per baris" oninput="updateRubricPreview(this)">${escapeHtml(rubricData.alternatives || '')}</textarea>
+                </label>
+                <label class="block text-xs font-bold text-slate-700">Aturan khusus
+                    <textarea class="rubric-rules mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm" rows="2" placeholder="Contoh: jawaban tanpa langkah maksimal 30%; satuan wajib; toleransi salah hitung kecil" oninput="updateRubricPreview(this)">${escapeHtml(rubricData.rules || rubricData.rubrikTeks || '')}</textarea>
+                </label>
+            </div>
+            <p class="rubric-preview rounded-lg bg-indigo-50 p-3 text-xs text-indigo-900">Rubrik otomatis disusun dari kunci dan aspek penilaian.</p>
+        </div>`;
+    updateRubricPreview(wrap.querySelector('.rubric-type'));
+}
+
+function rubricAspectMarkup(aspect = {}) {
+    return `<div class="rubric-aspect-row grid grid-cols-[minmax(0,1fr)_5rem_auto] gap-2"><input class="rubric-aspect-name min-w-0 rounded-lg border border-slate-300 p-2 text-sm" value="${escapeHtml(aspect.name || '')}" placeholder="Nama aspek" oninput="updateRubricPreview(this)"><input class="rubric-aspect-points w-full rounded-lg border border-slate-300 p-2 text-sm" type="number" min="0" step="1" value="${escapeHtml(aspect.points ?? '')}" placeholder="Poin" oninput="updateRubricPreview(this)"><button type="button" onclick="removeRubricAspect(this)" class="rounded-lg px-2 text-rose-700 hover:bg-rose-50" aria-label="Hapus aspek">×</button></div>`;
+}
+
+function toggleRubricQuestionEditor(select) {
+    const wrap = select.closest('.question-rubric-wrap');
+    wrap.querySelector('.rubric-choice-fields').classList.toggle('hidden', select.value !== 'choice');
+    wrap.querySelector('.rubric-essay-fields').classList.toggle('hidden', select.value !== 'essay');
+    updateRubricPreview(select);
+}
+
+function addRubricAspect(button) {
+    const list = button.closest('.question-rubric-wrap').querySelector('.rubric-aspects');
+    list.insertAdjacentHTML('beforeend', rubricAspectMarkup());
+}
+
+function removeRubricAspect(button) {
+    const list = button.closest('.rubric-aspects');
+    button.closest('.rubric-aspect-row').remove();
+    if (!list.children.length) list.insertAdjacentHTML('beforeend', rubricAspectMarkup());
+    updateRubricPreview(list);
+}
+
+function buildRubricText(questionData) {
+    if (questionData.type === 'choice') return `Jawaban benar: ${questionData.key}. Berikan ${questionData.maxPoin} poin untuk jawaban yang benar dan 0 poin untuk jawaban yang salah.`;
+    const aspects = questionData.aspects.map(aspect => `${aspect.name} (${aspect.points} poin)`).join('; ');
+    const alternatives = questionData.alternatives ? ` Jawaban alternatif yang diterima: ${questionData.alternatives.replace(/\n+/g, '; ')}.` : '';
+    const rules = questionData.rules ? ` Aturan khusus: ${questionData.rules}` : '';
+    return `Kunci jawaban: ${questionData.key}. Aspek penilaian: ${aspects}.${alternatives}${rules}`;
+}
+
+function updateRubricPreview(control) {
+    const wrap = control.closest('.question-rubric-wrap');
+    if (!wrap) return;
+    const type = wrap.querySelector('.rubric-type')?.value;
+    const preview = wrap.querySelector('.rubric-preview');
+    if (type === 'choice') {
+        const key = wrap.querySelector('.rubric-choice-key')?.value;
+        const points = wrap.querySelector('.rubric-max-points')?.value;
+        preview.textContent = key && points ? buildRubricText({ type, key, maxPoin: points }) : 'Pilih jawaban benar dan isi poin maksimal untuk menyusun rubrik.';
+        return;
+    }
+    const aspects = [...wrap.querySelectorAll('.rubric-aspect-row')].map(row => ({
+        name: row.querySelector('.rubric-aspect-name').value.trim(),
+        points: row.querySelector('.rubric-aspect-points').value
+    }));
+    const key = wrap.querySelector('.rubric-essay-key')?.value.trim();
+    const points = wrap.querySelector('.rubric-max-points')?.value;
+    if (!key || !points || aspects.some(aspect => !aspect.name || aspect.points === '')) {
+        preview.textContent = 'Isi kunci, poin maksimal, dan semua aspek untuk menyusun rubrik.';
+        return;
+    }
+    preview.textContent = buildRubricText({
+        type,
+        key,
+        maxPoin: points,
+        aspects: aspects.map(aspect => ({ ...aspect, points: Number(aspect.points) })),
+        alternatives: wrap.querySelector('.rubric-alternatives')?.value.trim() || '',
+        rules: wrap.querySelector('.rubric-rules')?.value.trim() || ''
+    });
+}
+
+function importTaskRubricJson(type) {
+    const raw = document.getElementById(`form${type}RubricImport`)?.value.trim();
+    if (!raw) {
+        customAlert('Tempel JSON rubrik dan kunci terlebih dahulu.', 'JSON Belum Diisi');
+        return;
+    }
+    try {
+        const parsed = JSON.parse(raw);
+        const rubric = parsed.gradingRubric || parsed.rubric || parsed;
+        const answerKey = parsed.answerKey || parsed.answerKeys || parsed;
+        const questions = document.querySelectorAll(`#form${type}Questions .question-editor`);
+        const answers = answerKey.answers || answerKey.questions || [];
+        document.getElementById(`form${type}TotalPoin`).value = rubric.totalPoin ?? answerKey.totalPoin ?? '';
+        questions.forEach((editor, index) => {
+            const rubricQuestion = rubric[`q${index + 1}`] || {};
+            let key = answers[index];
+            if (key && typeof key === 'object') key = key.correctAnswer ?? key.answer ?? key.kunci;
+            const questionKind = editor.querySelector('.question-type').value;
+            const rubricType = questionKind === 'choice' ? 'choice' : 'essay';
+            if (rubricType === 'choice' && Number.isInteger(Number(key)) && String(key).trim() !== '') {
+                key = String.fromCharCode(65 + Number(key));
+            }
+            const maxPoin = rubricQuestion.maxPoin ?? '';
+            renderRubricQuestionEditor(editor, {
+                type: rubricType,
+                maxPoin,
+                key: key ?? rubricQuestion.kunci ?? '',
+                rubrikTeks: rubricQuestion.rubrikTeks || '',
+                aspects: maxPoin ? [{ name: 'Penilaian sesuai rubrik', points: maxPoin }] : []
+            });
+        });
+        customAlert('JSON diimpor ke form. Periksa dan lengkapi setiap soal sebelum menyimpan.', 'Impor JSON Berhasil');
+    } catch (error) {
+        customAlert('JSON tidak valid. Periksa tanda kurung, koma, serta struktur rubric dan answers.', 'Impor JSON Gagal');
+    }
+}
+
 function adminTaskFormMarkup(type, label, accent) {
     const isLinkedTask = type !== 'Lkpd';
     return `<section class='rounded-2xl border border-slate-200 bg-white p-5'>
@@ -1266,6 +1412,7 @@ function adminTaskFormMarkup(type, label, accent) {
             <div class='grid gap-3 sm:grid-cols-2'><div><label class='mb-1 block text-xs font-bold text-slate-700'>Waktu dibuka:</label><input type='datetime-local' id='form${type}Open' required class='w-full rounded-xl border border-slate-300 p-3 text-sm'></div><div><label class='mb-1 block text-xs font-bold text-slate-700'>Batas waktu:</label><input type='datetime-local' id='form${type}Close' required class='w-full rounded-xl border border-slate-300 p-3 text-sm'></div></div>
             <div class='border-t border-slate-200 pt-3'><label class='mb-1 block text-xs font-bold text-slate-700'>Prompt AI (opsional):</label><div class='flex gap-2'><input id='form${type}Prompt' class='min-w-0 flex-1 rounded-xl border border-slate-300 p-3 text-sm' placeholder='Instruksi untuk membuat soal'><button type='button' onclick='generateSoalAI("${type}")' class='rounded-xl bg-${accent}-600 px-4 py-2 text-xs font-bold text-white'>Generate</button></div></div>
             <div><div class='mb-2 flex items-center justify-between'><label class='text-xs font-bold text-slate-700'>Daftar soal:</label><button type='button' onclick='addQuestionField("${type}")' class='text-xs font-bold text-${accent}-700'>+ Tambah Soal</button></div><div id='form${type}Questions' class='space-y-3'></div></div>
+            <div class='space-y-3 border-t border-slate-200 pt-4'><h5 class='text-sm font-black text-slate-900'>Kunci dan Rubrik Penilaian AI</h5><label class='block text-xs font-bold text-slate-700'>Total poin tugas<input id='form${type}TotalPoin' type='number' min='1' step='1' required class='mt-1 w-full rounded-xl border border-slate-300 p-3 text-sm' placeholder='Contoh: 100'></label><label class='block text-xs font-bold text-slate-700'>Impor JSON kunci/rubrik<textarea id='form${type}RubricImport' rows='3' class='mt-1 w-full rounded-xl border border-slate-300 p-3 font-mono text-xs' placeholder='Tempel dokumen gradingRubrics dan answerKeys'></textarea></label><button type='button' onclick='importTaskRubricJson("${type}")' class='rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-50'>Impor JSON dan validasi</button></div>
             <button type='submit' class='rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white'>Simpan ${label}</button>
         </form>
         <h5 class='mb-3 mt-5 text-sm font-extrabold text-slate-900'>${label} yang tersedia</h5><div id='guru${type}ListContainer' class='space-y-3'></div>
@@ -2034,13 +2181,7 @@ async function getGradingRubricForTask(taskId) {
     if (!['teacher', 'admin'].includes(role) || !isFirebaseReady() || !firebaseAuth.currentUser) {
         throw new Error('Rubrik hanya dapat dimuat oleh guru atau admin yang sudah login.');
     }
-
-    const snapshot = await firebaseDb.collection('gradingRubrics')
-        .where('taskId', '==', String(taskId))
-        .limit(1)
-        .get();
-
-    return snapshot.empty ? null : snapshot.docs[0].data();
+    return getPrivateTaskDocument('gradingRubrics', taskId);
 }
 
 async function getAnswerKeyForTask(taskId) {
@@ -2048,39 +2189,60 @@ async function getAnswerKeyForTask(taskId) {
     if (!['teacher', 'admin'].includes(role) || !isFirebaseReady() || !firebaseAuth.currentUser) {
         throw new Error('Kunci jawaban hanya dapat dimuat oleh guru atau admin yang sudah login.');
     }
-
-    const snapshot = await firebaseDb.collection('answerKeys')
-        .where('taskId', '==', String(taskId))
-        .limit(1)
-        .get();
-
-    return snapshot.empty ? null : snapshot.docs[0].data();
+    return getPrivateTaskDocument('answerKeys', taskId);
 }
 
-async function loadPrivateAnswerKeysIntoTeacherTasks() {
+async function getPrivateTaskDocument(collectionName, taskId) {
+    const taskIdString = String(taskId);
+    const directSnapshot = await firebaseDb.collection(collectionName).doc(taskIdString).get();
+    if (directSnapshot.exists) return directSnapshot.data();
+    const legacySnapshot = await firebaseDb.collection(collectionName)
+        .where('taskId', '==', taskIdString)
+        .limit(1)
+        .get();
+    return legacySnapshot.empty ? null : legacySnapshot.docs[0].data();
+}
+
+async function loadTaskRubricStatuses() {
     const role = normalizeRole(state.currentUser?.role);
     if (!['teacher', 'admin'].includes(role) || !isFirebaseReady() || !firebaseAuth.currentUser) return;
 
-    const snapshot = await firebaseDb.collection('answerKeys').get();
-    const keysByTask = new Map(snapshot.docs.map(doc => [String(doc.data().taskId), doc.data()]));
-    Object.keys(state.taskList).forEach(type => {
-        state.taskList[type] = state.taskList[type].map(task => {
-            const keyDocument = keysByTask.get(String(task.id));
-            const keyedQuestions = keyDocument?.questions || keyDocument?.answers;
-            if (!Array.isArray(keyedQuestions)) return task;
-            return {
-                ...task,
-                questions: (task.questions || []).map((question, index) => {
-                    if (!question || typeof question !== 'object') return question;
-                    const key = keyedQuestions[index];
-                    const correctAnswer = key && typeof key === 'object'
-                        ? key.correctAnswer ?? key.answer
-                        : key;
-                    return correctAnswer === undefined ? question : { ...question, correctAnswer };
-                })
-            };
-        });
+    const [rubricSnapshot, answerSnapshot] = await Promise.all([
+        firebaseDb.collection('gradingRubrics').get(),
+        firebaseDb.collection('answerKeys').get()
+    ]);
+    const taskIdOf = doc => String(doc.data().taskId || doc.id);
+    const rubricIds = new Set(rubricSnapshot.docs.map(taskIdOf));
+    const answerIds = new Set(answerSnapshot.docs.map(taskIdOf));
+    taskRubricStatusById = new Map();
+    [...rubricIds, ...answerIds].forEach(taskId => {
+        taskRubricStatusById.set(taskId, rubricIds.has(taskId) && answerIds.has(taskId));
     });
+    renderGuruView();
+}
+
+async function saveTaskRubricDocuments(task, rubric, answerKey) {
+    const taskId = String(task.id || '').trim();
+    const user = firebaseAuth?.currentUser;
+    if (!taskId) throw new Error('ID tugas belum tersedia; kunci dan rubrik tidak dapat disimpan.');
+    if (!isFirebaseReady() || !user) throw new Error('Login guru ke Firebase diperlukan untuk menyimpan kunci dan rubrik.');
+
+    const [existingRubric, existingAnswerKey] = await Promise.all([
+        getPrivateTaskDocument('gradingRubrics', taskId),
+        getPrivateTaskDocument('answerKeys', taskId)
+    ]);
+    const metadata = {
+        taskId,
+        title: task.title,
+        totalPoin: rubric.totalPoin,
+        createdBy: existingRubric?.createdBy || existingAnswerKey?.createdBy || user.uid,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    const batch = firebaseDb.batch();
+    batch.set(firebaseDb.collection('gradingRubrics').doc(taskId), { ...metadata, ...rubric });
+    batch.set(firebaseDb.collection('answerKeys').doc(taskId), { ...metadata, ...answerKey });
+    await batch.commit();
+    taskRubricStatusById.set(taskId, true);
 }
 
 async function gradePendingSubmissionWithAI(submissionId, retry = false) {
@@ -2396,6 +2558,7 @@ function renderGuruView() {
                         <h4 class="font-bold text-sm text-slate-800">${t.title}</h4>
                         <p class="text-[10px] text-indigo-600 font-bold">Kelas: ${getClassName(t.classId)}</p>
                         <p class="text-[10px] text-slate-500">Jadwal: ${new Date(t.openDate).toLocaleString()} - ${new Date(t.closeDate).toLocaleString()}</p>
+                        <span class="mt-2 inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ${taskRubricStatusById.get(String(t.id)) ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">${taskRubricStatusById.get(String(t.id)) ? 'Rubrik siap' : 'Rubrik belum ada'}</span>
                     </div>
                     <div class="flex gap-2">
                         <button onclick="editTask('${type}', ${t.id})" class="text-[11px] bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold px-3 py-1.5 rounded-lg transition">Edit</button>
@@ -3007,6 +3170,16 @@ async function saveNewTask(e, type) {
     }
     const submitButton = e.target.querySelector('button[type="submit"]');
     if (submitButton) submitButton.disabled = true;
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) {
+        if (submitButton) submitButton.disabled = false;
+        customAlert('Login guru ke Firebase diperlukan untuk menyimpan tugas, kunci, dan rubrik privat.', 'Firebase Belum Siap');
+        return;
+    }
+    if (editors.length > 20) {
+        if (submitButton) submitButton.disabled = false;
+        customAlert('Rubrik mendukung maksimal 20 soal per tugas.', 'Batas Jumlah Soal');
+        return;
+    }
     let questionFields;
     try {
         questionFields = (await Promise.all(editors.map(async editor => {
@@ -3016,8 +3189,7 @@ async function saveNewTask(e, type) {
             const image = imageInput.files[0] ? await readFileAsDataUrl(imageInput.files[0]) : (editor.dataset.image || '');
             const options = [...editor.querySelectorAll('.question-option')].map(input => input.value.trim());
             while (options.length && !options[options.length - 1]) options.pop();
-            const correctAnswer = editor.querySelector('.question-correct')?.value || '';
-            return { type: kind, text, image, options, correctAnswer };
+            return { type: kind, text, image, options };
         }))).filter(question => question.text || question.image || (question.type === 'choice' && question.options.length >= 2));
     } catch (error) {
         if (submitButton) submitButton.disabled = false;
@@ -3037,11 +3209,8 @@ async function saveNewTask(e, type) {
     if (questionFields.some(question => question.type === 'choice' && (
         question.options.length < 2
         || question.options.some(option => !option)
-        || question.correctAnswer === ''
-        || !Number.isInteger(Number(question.correctAnswer))
-        || question.options[Number(question.correctAnswer)] === undefined
     ))) {
-        customAlert('Pilihan ganda harus memiliki minimal dua opsi terisi tanpa celah dan jawaban benar yang termasuk dalam opsi.', 'Kesalahan Input');
+        customAlert('Pilihan ganda harus memiliki minimal dua opsi terisi tanpa celah.', 'Kesalahan Input');
         if (submitButton) submitButton.disabled = false;
         return;
     }
@@ -3071,6 +3240,15 @@ async function saveNewTask(e, type) {
         ...(type !== 'Lkpd' ? { prerequisiteLkpdId } : {})
     };
 
+    let rubricDocuments;
+    try {
+        rubricDocuments = collectTaskRubricDocuments(type, newTask);
+    } catch (error) {
+        customAlert(error.message, 'Rubrik Belum Valid');
+        if (submitButton) submitButton.disabled = false;
+        return;
+    }
+
     if (new Date(newTask.openDate) >= new Date(newTask.closeDate)) {
         customAlert("Batas waktu (Tutup) harus lebih besar dari Waktu Dibuka.", "Kesalahan Input");
         if (submitButton) submitButton.disabled = false;
@@ -3092,18 +3270,105 @@ async function saveNewTask(e, type) {
         customAlert('Soal tidak tersimpan. Ukuran foto terlalu besar untuk penyimpanan browser. Gunakan foto yang lebih kecil.', 'Penyimpanan Gagal');
         return;
     }
-    if (syncResult !== false) {
-        customAlert(syncResult ? `${type} berhasil disimpan dan disinkronkan ke Firestore.` : `${type} tersimpan di perangkat ini saja karena Firebase belum aktif.`, 'Tugas Tersimpan');
+    if (syncResult === false) {
+        form.dataset.editingId = String(newTask.id);
+        if (submitButton) submitButton.disabled = false;
+        return;
     }
+    try {
+        await saveTaskRubricDocuments(newTask, rubricDocuments.rubric, rubricDocuments.answerKey);
+    } catch (error) {
+        console.error('Gagal menyimpan kunci/rubrik tugas:', error);
+        form.dataset.editingId = String(newTask.id);
+        if (submitButton) submitButton.disabled = false;
+        customAlert(`Tugas tersimpan, tetapi kunci atau rubrik gagal disimpan. Periksa Firestore Rules lalu edit tugas ini untuk mencoba lagi.\n\nKode error: ${error.code || 'tidak tersedia'}`, 'Rubrik Gagal Disimpan');
+        await loadTaskRubricStatuses().catch(() => {});
+        renderTaskManagementView();
+        return;
+    }
+    customAlert(`${type} beserta kunci dan rubrik berhasil disimpan ke Firestore.`, 'Tugas Tersimpan');
     e.target.reset();
+    delete form.dataset.editingId;
     if (submitButton) submitButton.disabled = false;
+    await loadTaskRubricStatuses();
     renderTaskManagementView();
 }
 
-function editTask(type, id) {
+function collectTaskRubricDocuments(type, task) {
+    const taskId = String(task.id || '').trim();
+    if (!taskId) throw new Error('ID tugas kosong. Simpan ulang tugas agar ID dapat dibuat.');
+    const totalPoin = Number(document.getElementById(`form${type}TotalPoin`)?.value);
+    if (!Number.isInteger(totalPoin) || totalPoin <= 0) throw new Error('Total poin tugas harus berupa bilangan bulat lebih dari 0.');
+    const editors = [...document.querySelectorAll(`#form${type}Questions .question-editor`)];
+    const rubric = { taskId, title: task.title, totalPoin };
+    const answers = [];
+    let pointSum = 0;
+
+    editors.forEach((editor, index) => {
+        const wrap = editor.querySelector('.question-rubric-wrap');
+        const questionType = editor.querySelector('.question-type').value;
+        const rubricType = wrap.querySelector('.rubric-type').value;
+        const expectedType = questionType === 'choice' ? 'choice' : 'essay';
+        if (rubricType !== expectedType) throw new Error(`Tipe kunci soal ${index + 1} harus sesuai dengan tipe soalnya.`);
+        const maxPoin = Number(wrap.querySelector('.rubric-max-points').value);
+        if (!Number.isInteger(maxPoin) || maxPoin <= 0) throw new Error(`Poin maksimal soal ${index + 1} harus bilangan bulat lebih dari 0.`);
+        pointSum += maxPoin;
+
+        let key;
+        let rubrikTeks;
+        if (rubricType === 'choice') {
+            key = wrap.querySelector('.rubric-choice-key').value;
+            if (!/^[A-Z]$/.test(key)) throw new Error(`Pilih jawaban benar untuk soal ${index + 1}.`);
+            const options = [...editor.querySelectorAll('.question-option')].map(input => input.value.trim()).filter(Boolean);
+            if (!options[key.charCodeAt(0) - 65]) throw new Error(`Kunci soal ${index + 1} tidak cocok dengan opsi yang tersedia.`);
+            rubrikTeks = buildRubricText({ type: rubricType, key, maxPoin });
+        } else {
+            key = wrap.querySelector('.rubric-essay-key').value.trim();
+            if (!key) throw new Error(`Kunci jawaban esai soal ${index + 1} wajib diisi.`);
+            const aspects = [...wrap.querySelectorAll('.rubric-aspect-row')].map(row => ({
+                name: row.querySelector('.rubric-aspect-name').value.trim(),
+                points: Number(row.querySelector('.rubric-aspect-points').value)
+            }));
+            if (!aspects.length || aspects.some(aspect => !aspect.name || !Number.isInteger(aspect.points) || aspect.points < 0)) {
+                throw new Error(`Lengkapi nama dan poin setiap aspek penilaian soal ${index + 1}.`);
+            }
+            if (aspects.reduce((sum, aspect) => sum + aspect.points, 0) !== maxPoin) {
+                throw new Error(`Jumlah poin aspek soal ${index + 1} harus sama dengan poin maksimal (${maxPoin}).`);
+            }
+            const alternatives = wrap.querySelector('.rubric-alternatives').value.trim();
+            const rules = wrap.querySelector('.rubric-rules').value.trim();
+            rubrikTeks = buildRubricText({ type: rubricType, key, maxPoin, aspects, alternatives, rules });
+        }
+        rubric[`q${index + 1}`] = { maxPoin, kunci: key, rubrikTeks };
+        answers.push(key);
+    });
+
+    if (editors.length !== task.questions.length) throw new Error('Jumlah editor soal berubah. Muat ulang form lalu coba lagi.');
+    if (pointSum !== totalPoin) throw new Error(`Jumlah poin seluruh soal (${pointSum}) harus sama dengan total poin tugas (${totalPoin}).`);
+    return {
+        rubric,
+        answerKey: { taskId, title: task.title, totalPoin, answers }
+    };
+}
+
+async function editTask(type, id) {
     const task = state.taskList[type].find(item => item.id === id);
     const form = document.querySelector(`#form${type}Title`)?.closest('form');
     if (!task || !form) return;
+    let rubric;
+    let answerKey;
+    if (isFirebaseReady() && firebaseAuth.currentUser) {
+        try {
+            [rubric, answerKey] = await Promise.all([
+                getGradingRubricForTask(task.id),
+                getAnswerKeyForTask(task.id)
+            ]);
+        } catch (error) {
+            console.error('Gagal memuat kunci/rubrik saat edit:', error);
+            customAlert(`Dokumen privat gagal dimuat. Periksa koneksi dan Firestore Rules.\n\nKode error: ${error.code || 'tidak tersedia'}`, 'Gagal Memuat Rubrik');
+            return;
+        }
+    }
     const isAdmin = normalizeRole(state.currentUser?.role) === 'admin';
     if (isAdmin && location.hash !== '#tugas') switchAdminPanel('tugas');
     document.getElementById(`form${type}Title`).value = task.title;
@@ -3113,7 +3378,28 @@ function editTask(type, id) {
     if (type !== 'Lkpd') renderLinkedLkpdOptions(type, task.prerequisiteLkpdId);
     const questions = document.getElementById(`form${type}Questions`);
     questions.innerHTML = '';
-    task.questions.forEach(question => addQuestionField(type, question));
+    const answers = answerKey?.answers || answerKey?.questions || [];
+    task.questions.forEach((question, index) => {
+        const rubricQuestion = rubric?.[`q${index + 1}`] || {};
+        let key = answers[index];
+        if (key && typeof key === 'object') key = key.correctAnswer ?? key.answer ?? key.kunci;
+        const normalizedQuestion = normalizeQuestion(question);
+        if (normalizedQuestion.type === 'choice' && Number.isInteger(Number(key)) && String(key ?? '').trim() !== '') {
+            key = String.fromCharCode(65 + Number(key));
+        }
+        const maxPoin = rubricQuestion.maxPoin || '';
+        addQuestionField(type, question, {
+            type: normalizedQuestion.type === 'choice' ? 'choice' : 'essay',
+            maxPoin,
+            key: key ?? rubricQuestion.kunci ?? '',
+            rubrikTeks: rubricQuestion.rubrikTeks || '',
+            rules: rubricQuestion.rubrikTeks || '',
+            aspects: maxPoin && normalizedQuestion.type !== 'choice'
+                ? [{ name: 'Aspek dari rubrik tersimpan', points: maxPoin }]
+                : []
+        });
+    });
+    document.getElementById(`form${type}TotalPoin`).value = rubric?.totalPoin ?? answerKey?.totalPoin ?? '';
     form.dataset.editingId = id;
     if (!isAdmin) switchTeacherTab(type.toLowerCase());
 }
@@ -3149,7 +3435,7 @@ function deleteReviewedSubmission(id) {
     });
 }
 
-function addQuestionField(type, value = '') {
+function addQuestionField(type, value = '', rubricData = {}) {
     const container = document.getElementById(`form${type}Questions`);
     if (!container) return;
     const question = normalizeQuestion(value);
@@ -3169,11 +3455,23 @@ function addQuestionField(type, value = '') {
         <textarea id="${textInputId}" rows="3" class="question-text w-full p-3 rounded-xl border border-slate-300 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Tulis pertanyaan ke-${questionNumber}...">${escapeHtml(question.text)}</textarea>
         <button type="button" onclick="showEquationKeyboard('${textInputId}')" class="equation-key px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold">Tambah simbol persamaan</button>
         <div class="question-image-wrap"><label class="block text-xs font-bold text-slate-700 mb-1">Foto soal (opsional, bisa digabung dengan teks atau pilihan ganda):</label><div class="flex flex-wrap items-center gap-3"><input type="file" accept="image/*" capture="environment" class="question-image min-w-0 flex-1 block w-full text-sm text-slate-500"><button type="button" onclick="openTeacherQuestionCamera('${type}', this.closest('.question-editor').querySelector('.question-image'))" class="shrink-0 rounded-lg bg-indigo-100 px-4 py-2.5 text-xs font-bold text-indigo-800 hover:bg-indigo-200">Ambil Foto</button></div></div>
-        <div class="question-choice-wrap space-y-2"><label class="block text-xs font-bold text-slate-700">Opsi jawaban:</label>${[0, 1, 2, 3].map(index => { const optionId = `questionOption_${editorId}_${index}`; return `<div><div class="flex gap-2"><input id="${optionId}" class="question-option min-w-0 flex-1 p-2.5 rounded-lg border border-slate-300 text-sm" value="${escapeHtml(question.options[index] || '')}" placeholder="Opsi ${String.fromCharCode(65 + index)}"><button type="button" onclick="showEquationKeyboard('${optionId}')" class="equation-key px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold" aria-label="Tambah simbol pada opsi ${String.fromCharCode(65 + index)}">∑</button></div></div>`; }).join('')}<label class="block text-xs font-bold text-slate-700">Jawaban benar:</label><select class="question-correct w-full p-2.5 rounded-lg border border-slate-300 text-sm"><option value="">Pilih jawaban benar</option>${[0, 1, 2, 3].map(index => `<option value="${index}" ${String(question.correctAnswer) === String(index) ? 'selected' : ''}>Opsi ${String.fromCharCode(65 + index)}</option>`).join('')}</select></div>
+        <div class="question-choice-wrap space-y-2"><label class="block text-xs font-bold text-slate-700">Opsi jawaban:</label>${[0, 1, 2, 3].map(index => { const optionId = `questionOption_${editorId}_${index}`; return `<div><div class="flex gap-2"><input id="${optionId}" class="question-option min-w-0 flex-1 p-2.5 rounded-lg border border-slate-300 text-sm" value="${escapeHtml(question.options[index] || '')}" placeholder="Opsi ${String.fromCharCode(65 + index)}" oninput="refreshRubricChoiceOptions(this)"><button type="button" onclick="showEquationKeyboard('${optionId}')" class="equation-key px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold" aria-label="Tambah simbol pada opsi ${String.fromCharCode(65 + index)}">∑</button></div></div>`; }).join('')}</div>
+        <div class="question-rubric-wrap"></div>
     `;
     container.appendChild(field);
     toggleQuestionEditor(field.querySelector('.question-type'));
+    renderRubricQuestionEditor(field, rubricData);
     renumberQuestionFields(type);
+}
+
+function refreshRubricChoiceOptions(optionInput) {
+    const editor = optionInput.closest('.question-editor');
+    const select = editor.querySelector('.rubric-choice-key');
+    const selected = select.value;
+    const options = [...editor.querySelectorAll('.question-option')].map(input => input.value.trim());
+    select.innerHTML = `<option value="">Pilih huruf jawaban</option>${options.map((option, index) => option ? `<option value="${String.fromCharCode(65 + index)}">${String.fromCharCode(65 + index)} · ${escapeHtml(option)}</option>` : '').join('')}`;
+    if (options[selected.charCodeAt(0) - 65]) select.value = selected;
+    updateRubricPreview(select);
 }
 
 function toggleQuestionEditor(typeSelect) {
@@ -3225,16 +3523,46 @@ function renumberQuestionFields(type) {
     [...container.children].forEach((field, index) => {
         field.querySelector('span').innerText = `Soal ${index + 1}`;
         field.querySelector('.question-text').placeholder = `Tulis pertanyaan ke-${index + 1}...`;
+        const rubricTitle = field.querySelector('.rubric-question-title');
+        if (rubricTitle) rubricTitle.innerText = `Kunci dan Rubrik Penilaian AI · Soal ${index + 1}`;
     });
 }
 
-function deleteTask(type, id) {
-    customConfirm(`Apakah Anda yakin ingin menghapus data ${type} ini?`, async () => {
-        state.taskList[type] = state.taskList[type].filter(t => t.id !== id);
-        removeContentNotification(id, type);
-        await saveLearningContent();
-        renderTaskManagementView();
-    });
+function askDeleteTask(type, id) {
+    const modalTitle = document.getElementById('modalTitle');
+    const modalMessage = document.getElementById('modalMessage');
+    const modalActions = document.getElementById('modalActions');
+    const modal = document.getElementById('customModal');
+    if (!modal) return;
+    modalTitle.innerText = 'Hapus Tugas';
+    modalMessage.innerText = 'Apakah rubrik dan kunci privat untuk tugas ini juga ingin dihapus?';
+    modalActions.innerHTML = `
+        <button onclick="closeModal()" class="rounded-lg bg-slate-200 px-3 py-2 text-xs font-bold text-slate-700">Batal</button>
+        <button onclick="closeModal(); deleteTask('${type}', ${id}, false)" class="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">Tugas saja</button>
+        <button onclick="closeModal(); deleteTask('${type}', ${id}, true)" class="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white">Tugas + rubrik</button>
+    `;
+    modal.classList.remove('hidden');
+}
+
+async function deleteTask(type, id, removePrivateDocs) {
+    if (removePrivateDocs && isFirebaseReady() && firebaseAuth.currentUser) {
+        const taskId = String(id);
+        try {
+            const batch = firebaseDb.batch();
+            batch.delete(firebaseDb.collection('gradingRubrics').doc(taskId));
+            batch.delete(firebaseDb.collection('answerKeys').doc(taskId));
+            await batch.commit();
+            taskRubricStatusById.delete(taskId);
+        } catch (error) {
+            console.error('Gagal menghapus dokumen kunci/rubrik:', error);
+            customAlert(`Tugas tidak dihapus karena dokumen rubrik/kunci gagal dihapus.\n\nKode error: ${error.code || 'tidak tersedia'}`, 'Gagal Menghapus Rubrik');
+            return;
+        }
+    }
+    state.taskList[type] = state.taskList[type].filter(task => task.id !== id);
+    removeContentNotification(id, type);
+    await saveLearningContent();
+    renderTaskManagementView();
 }
 
 function generateSoalAI(type) {

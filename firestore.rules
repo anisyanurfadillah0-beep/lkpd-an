@@ -26,6 +26,49 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/classAccessCodes/$(string(classId))).data.accessCode == accessCode;
     }
 
+    function validRubricQuestion(data, key) {
+      return !(key in data.keys()) || (
+        data[key] is map
+        && data[key].keys().hasAll(['maxPoin', 'kunci', 'rubrikTeks'])
+        && data[key].maxPoin is int
+        && data[key].kunci is string
+        && data[key].rubrikTeks is string
+      );
+    }
+
+    function validRubricQuestions(data) {
+      return validRubricQuestion(data, 'q1')
+        && validRubricQuestion(data, 'q2')
+        && validRubricQuestion(data, 'q3')
+        && validRubricQuestion(data, 'q4')
+        && validRubricQuestion(data, 'q5')
+        && validRubricQuestion(data, 'q6')
+        && validRubricQuestion(data, 'q7')
+        && validRubricQuestion(data, 'q8')
+        && validRubricQuestion(data, 'q9')
+        && validRubricQuestion(data, 'q10')
+        && validRubricQuestion(data, 'q11')
+        && validRubricQuestion(data, 'q12')
+        && validRubricQuestion(data, 'q13')
+        && validRubricQuestion(data, 'q14')
+        && validRubricQuestion(data, 'q15')
+        && validRubricQuestion(data, 'q16')
+        && validRubricQuestion(data, 'q17')
+        && validRubricQuestion(data, 'q18')
+        && validRubricQuestion(data, 'q19')
+        && validRubricQuestion(data, 'q20');
+    }
+
+    function validPrivateDocument(data, docId) {
+      return data.taskId is string
+        && data.taskId == docId
+        && data.title is string
+        && data.totalPoin is int
+        && data.totalPoin > 0
+        && data.createdBy is string
+        && data.updatedAt is timestamp;
+    }
+
     match /users/{uid} {
       allow get: if isSignedIn() && (
         request.auth.uid == uid ||
@@ -130,27 +173,37 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && roleOf(request.auth.uid) == 'student'
         && request.resource.data.studentUid == request.auth.uid
-        && request.resource.data.role == 'student';
+        && request.resource.data.role == 'student'
+        && !request.resource.data.keys().hasAny([
+          'status', 'aiScore', 'aiReview', 'finalScore', 'nilai', 'nilaiAi',
+          'teacherNote', 'feedback', 'questionReviews'
+        ]);
 
       allow update: if isTeacherOrAdmin();
 
       allow delete: if isTeacherOrAdmin();
     }
 
-    match /gradingRubrics/{doc} {
+    match /gradingRubrics/{docId} {
       allow read: if isSignedIn()
         && roleOf(request.auth.uid) in ['teacher', 'admin'];
-      allow write: if false;
+      allow create, update: if isTeacherOrAdmin()
+        && validPrivateDocument(request.resource.data, docId)
+        && validRubricQuestions(request.resource.data);
+      allow delete: if isTeacherOrAdmin();
     }
 
     match /gradingSuggestions/{submissionId} {
       allow read, write: if isTeacherOrAdmin();
     }
 
-    match /answerKeys/{doc} {
+    match /answerKeys/{docId} {
       allow read: if isSignedIn()
         && roleOf(request.auth.uid) in ['teacher', 'admin'];
-      allow write: if false;
+      allow create, update: if isTeacherOrAdmin()
+        && validPrivateDocument(request.resource.data, docId)
+        && request.resource.data.answers is list;
+      allow delete: if isTeacherOrAdmin();
     }
 
     match /appData/{documentId} {
