@@ -674,9 +674,13 @@ async function handleFirebaseLogin(email, password) {
     const profile = await getUserProfileFromFirestore(uid);
     const profileRole = normalizeRole(profile?.role);
 
-    if (!profile || !profileRole || !LEGAL_ROLES.has(profileRole)) {
+    if (!profile) {
+        showMissingStudentProfileDialog(credential.user);
+        return;
+    }
+    if (!profileRole || !LEGAL_ROLES.has(profileRole)) {
         await firebaseAuth.signOut();
-        customAlert('Akun belum aktif atau role tidak ditemukan. Hubungi admin untuk aktivasi akun.', 'Login Ditolak');
+        customAlert('Profil akun ditemukan, tetapi role tidak valid. Hubungi guru atau admin untuk memperbaikinya.', 'Login Ditolak');
         return;
     }
 
@@ -689,19 +693,80 @@ async function handleFirebaseStudentRegistration(name, email, password) {
         throw new Error('Firebase belum siap.');
     }
 
-    const credential = await firebaseAuth.createUserWithEmailAndPassword(email, password);
+    const credential = await firebaseAuth.createUserWithEmailAndPassword(email.trim(), password);
     const uid = credential.user.uid;
     const profile = {
         name: name || 'Siswa Baru',
-        email: email,
+        email: email.trim(),
         role: 'student',
         classIds: [],
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
     };
 
-    await firebaseDb.collection('users').doc(uid).set(profile);
-    persistSessionProfile(profile, uid, email, profile.name);
+    try {
+        await firebaseDb.collection('users').doc(uid).set(profile);
+    } catch (error) {
+        try {
+            await credential.user.delete();
+        } catch (deleteError) {
+            error.rollbackError = deleteError;
+            console.error('Akun Auth gagal dihapus setelah profil siswa gagal disimpan:', deleteError);
+            await firebaseAuth.signOut().catch(() => {});
+        }
+        throw error;
+    }
+
+    persistSessionProfile(profile, uid, email.trim(), profile.name);
     routeByRole('student');
+}
+
+function showMissingStudentProfileDialog(user) {
+    const modalTitle = document.getElementById('modalTitle');
+    const modalMessage = document.getElementById('modalMessage');
+    const modalActions = document.getElementById('modalActions');
+    const modal = document.getElementById('customModal');
+    if (!modal || !modalTitle || !modalMessage || !modalActions) return;
+
+    modalTitle.innerText = 'Profil Belum Ditemukan';
+    modalMessage.innerText = 'Login berhasil, tetapi profil akun belum tersimpan. Jika akun ini didaftarkan sebagai siswa, Anda dapat membuat profil siswa sekarang. Jika bukan, hubungi guru atau admin untuk aktivasi.';
+    modalActions.innerHTML = `
+        <button onclick="showMissingProfileHelp()" class="px-4 py-2 bg-slate-200 text-slate-700 text-sm font-bold rounded-lg hover:bg-slate-300 transition">Hubungi Guru</button>
+        <button onclick="createStudentProfileForCurrentUser()" class="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 transition">Buat Profil Siswa</button>
+    `;
+    modal.dataset.missingProfileUid = user.uid;
+    modal.classList.remove('hidden');
+}
+
+function showMissingProfileHelp() {
+    closeModal();
+    customAlert('Hubungi guru atau admin sekolah dan sampaikan email akun Anda agar profil serta role dapat diperiksa.', 'Bantuan Aktivasi Akun');
+}
+
+async function createStudentProfileForCurrentUser() {
+    const modal = document.getElementById('customModal');
+    const uid = modal?.dataset.missingProfileUid;
+    const user = firebaseAuth?.currentUser;
+    if (!user || user.uid !== uid) {
+        customAlert('Sesi login berubah. Silakan masuk kembali untuk membuat profil.', 'Profil Tidak Dibuat');
+        return;
+    }
+
+    try {
+        const profile = {
+            name: user.displayName || user.email || 'Siswa',
+            email: user.email || '',
+            role: 'student',
+            classIds: [],
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        await firebaseDb.collection('users').doc(user.uid).set(profile);
+        closeModal();
+        persistSessionProfile(profile, user.uid, user.email, profile.name);
+        routeByRole('student');
+    } catch (error) {
+        console.error('Gagal membuat profil siswa:', error);
+        customAlert(`Profil gagal dibuat. Hubungi guru atau admin.\n\nKode error: ${error.code || 'tidak tersedia'}`, 'Profil Tidak Dibuat');
+    }
 }
 
 function addStudentNotification(type, title, classId, contentId = null, contentType = type) {
@@ -818,8 +883,10 @@ function setAuthMode(mode) {
     const btnSubmit = document.getElementById('btnAuthSubmit');
     const tabLogin = document.getElementById('tabAuthLogin');
     const tabReg = document.getElementById('tabAuthRegister');
+    const forgotPassword = document.getElementById('btnForgotPassword');
 
     if (fieldNama) fieldNama.classList.toggle('hidden', !isReg);
+    if (forgotPassword) forgotPassword.classList.toggle('hidden', isReg);
     if (btnSubmit) btnSubmit.innerText = isReg ? 'Daftar Akun Siswa' : 'Masuk ke Sistem';
     if (tabLogin) tabLogin.className = !isReg ? 'flex-1 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-slate-800 transition' : 'flex-1 py-2 text-xs font-bold rounded-lg text-slate-500 hover:text-slate-800 transition';
     if (tabReg) tabReg.className = isReg ? 'flex-1 py-2 text-xs font-bold rounded-lg bg-white shadow-sm text-slate-800 transition' : 'flex-1 py-2 text-xs font-bold rounded-lg text-slate-500 hover:text-slate-800 transition';
@@ -861,6 +928,50 @@ function getLoginErrorMessage(error) {
     }
 }
 
+function getRegistrationErrorMessage(error) {
+    switch (error?.code) {
+        case 'auth/email-already-in-use':
+            return 'Email sudah terdaftar, silakan masuk atau reset password.';
+        case 'auth/weak-password':
+            return 'Kata sandi terlalu lemah. Gunakan minimal 6 karakter.';
+        case 'auth/invalid-email':
+            return 'Format email tidak valid. Periksa kembali alamat email Anda.';
+        case 'permission-denied':
+        case 'firestore/permission-denied':
+            return 'Akun Auth berhasil dibuat, tetapi Firestore menolak penyimpanan profil. Periksa aturan Firestore atau hubungi admin.';
+        case 'auth/network-request-failed':
+        case 'unavailable':
+            return 'Koneksi jaringan gagal. Periksa internet lalu coba daftar kembali.';
+        default:
+            return 'Pendaftaran siswa gagal. Periksa koneksi dan konfigurasi Firebase.';
+    }
+}
+
+async function sendPasswordReset() {
+    const email = document.getElementById('inputEmail')?.value.trim();
+    if (!email) {
+        customAlert('Masukkan email terlebih dahulu untuk menerima tautan reset password.', 'Lupa Password');
+        document.getElementById('inputEmail')?.focus();
+        return;
+    }
+    if (!isFirebaseReady()) {
+        customAlert('Reset password hanya tersedia untuk akun Firebase. Periksa koneksi dan konfigurasi Firebase.', 'Reset Password Gagal');
+        return;
+    }
+
+    try {
+        await firebaseAuth.sendPasswordResetEmail(email);
+        customAlert('Tautan reset password telah dikirim ke email Anda. Periksa juga folder spam.', 'Email Reset Terkirim');
+    } catch (error) {
+        console.error('Gagal mengirim email reset password:', error);
+        let message = 'Email reset password gagal dikirim. Periksa email dan koneksi jaringan.';
+        if (error.code === 'auth/invalid-email') message = 'Format email tidak valid. Periksa kembali alamat email Anda.';
+        if (error.code === 'auth/user-not-found') message = 'Email belum terdaftar. Periksa alamat email atau buat akun siswa.';
+        if (isFirebaseUnavailableError(error)) message = 'Koneksi jaringan gagal. Periksa internet lalu coba kembali.';
+        customAlert(`${message}\n\nKode error: ${error.code || 'tidak tersedia'}`, 'Reset Password Gagal');
+    }
+}
+
 function loginWithLocalAccount(email, password) {
     const existingUser = state.users.find(user => user.email.toLowerCase() === String(email || '').toLowerCase() && user.password === String(password || ''));
     if (!existingUser) {
@@ -898,7 +1009,10 @@ async function handleAuthSubmit(e) {
                 return;
             } catch (error) {
                 console.error(error);
-                customAlert('Pendaftaran siswa gagal. Pastikan email belum terpakai dan Firebase sudah dikonfigurasi.', 'Pendaftaran Ditolak');
+                const rollbackMessage = error.rollbackError
+                    ? `\nAkun Auth mungkin masih ada dan perlu diperiksa admin. Kode rollback: ${error.rollbackError.code || 'tidak tersedia'}`
+                    : '';
+                customAlert(`${getRegistrationErrorMessage(error)}\n\nKode error: ${error.code || 'tidak tersedia'}${rollbackMessage}`, 'Pendaftaran Ditolak');
                 return;
             }
         }
@@ -942,7 +1056,7 @@ async function handleAuthSubmit(e) {
                 return;
             }
             if (isFirebaseUnavailableError(error)) {
-                customAlert('Firebase sedang tidak tersedia. Sistem telah mencoba login lokal, tetapi akun tidak ditemukan. Cek akun default atau aktifkan Firebase kembali.', 'Login Ditolak');
+                customAlert(`Koneksi Firebase gagal. Sistem telah mencoba login lokal, tetapi akun tidak ditemukan. Periksa internet atau akun default.\n\nKode error: ${error.code || 'tidak tersedia'}`, 'Login Ditolak');
                 return;
             }
             customAlert(`${getLoginErrorMessage(error)}\n\nKode error: ${error.code || 'tidak tersedia'}`, 'Login Ditolak');
@@ -1021,7 +1135,11 @@ async function checkExistingSession(expectedRole) {
 
                 const profile = await getUserProfileFromFirestore(user.uid);
                 const profileRole = normalizeRole(profile?.role);
-                if (!profile || !LEGAL_ROLES.has(profileRole)) {
+                if (!profile) {
+                    showMissingStudentProfileDialog(user);
+                    return;
+                }
+                if (!LEGAL_ROLES.has(profileRole)) {
                     customAlert('Akun Anda belum siap. Hubungi admin untuk aktivasi.', 'Akses Ditolak');
                     await firebaseAuth.signOut().catch(() => {});
                     return;
@@ -1854,9 +1972,12 @@ async function selectStudentClass() {
             });
         } catch (error) {
             console.error('Kode kelas gagal diverifikasi:', error);
-            showStudentClassMessage(error.code === 'permission-denied'
-                ? 'Kode kelas salah atau aturan akses Firestore belum diperbarui.'
-                : 'Kode kelas gagal diverifikasi. Periksa koneksi lalu coba lagi.');
+            const message = error.code === 'permission-denied'
+                ? 'Kode akses salah atau aturan akses Firestore belum diperbarui.'
+                : isFirebaseUnavailableError(error)
+                    ? 'Kegagalan jaringan saat memeriksa kode akses. Periksa koneksi lalu coba lagi.'
+                    : 'Kode kelas gagal diverifikasi. Periksa koneksi lalu coba lagi.';
+            showStudentClassMessage(`${message} Kode error: ${error.code || 'tidak tersedia'}`);
             return;
         }
     } else if (!alreadyJoined && (!selectedClass.accessCode || submittedCode !== selectedClass.accessCode.toUpperCase())) {
