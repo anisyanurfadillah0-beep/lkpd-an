@@ -1896,11 +1896,18 @@ async function loadStudentSchedule() {
     scheduleActiveDayByScope.student = getJakartaDay();
     const uid = firebaseAuth.currentUser.uid;
     try {
+        const profileSnapshot = await firebaseDb.collection('users').doc(uid).get();
+        const profile = profileSnapshot.exists ? profileSnapshot.data() : {};
+        const studentProfile = getCurrentStudentUser();
         const candidates = [
-            state.currentUser?.classId,
-            getCurrentStudentUser()?.classId,
-            ...(Array.isArray(getCurrentStudentUser()?.classIds) ? getCurrentStudentUser().classIds : [])
-        ].map(Number).filter((value, index, values) => Number.isInteger(value) && value > 0 && values.indexOf(value) === index);
+            profile.classId,
+            ...(Array.isArray(profile.classIds) ? profile.classIds : []),
+            state.currentUser?.id === uid ? state.currentUser.classId : null,
+            studentProfile?.classId,
+            ...(Array.isArray(studentProfile?.classIds) ? studentProfile.classIds : [])
+        ]
+            .map(Number)
+            .filter((value, index, values) => Number.isInteger(value) && value > 0 && values.indexOf(value) === index);
         const membershipCollection = firebaseDb.collection('users').doc(uid).collection('classMemberships');
         let classId = null;
         for (const candidate of candidates) {
@@ -1910,10 +1917,8 @@ async function loadStudentSchedule() {
                 break;
             }
         }
-        if (!classId) {
-            const memberships = await membershipCollection.get();
-            const membership = memberships.docs.find(document => Number(document.data().classId || document.id) > 0);
-            if (membership) classId = Number(membership.data().classId || membership.id);
+        if (!classId && Number.isInteger(Number(profile.classId)) && Number(profile.classId) > 0) {
+            classId = Number(profile.classId);
         }
         if (token !== studentScheduleLoadToken) return;
         if (!classId) {
