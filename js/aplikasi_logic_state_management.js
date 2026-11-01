@@ -43,6 +43,7 @@ let firebaseDb = null;
 let submissionsUnsubscribe = null;
 let classAccessCodesSyncAvailable = true;
 let classAccessCodesWarningShown = false;
+const classMemberRows = { teacher: [], admin: [] };
 
 function showClassAccessCodesSyncWarning() {
     if (classAccessCodesWarningShown) return;
@@ -1116,7 +1117,7 @@ function renderDashboardForRole(expectedRole) {
             if (container && container.children.length === 0) addQuestionField(type);
         });
         renderGuruView();
-        switchTeacherTab(getTabFromHash('materi', ['kelas', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
+        switchTeacherTab(getTabFromHash('materi', ['kelas', 'anggota', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
     }
     if (normalizeRole(expectedRole) === 'admin') {
         renderAdminView();
@@ -1236,7 +1237,7 @@ function renderAdminView() {
     if (!panelTitle || !panelContent) return;
     ensureClassAccessCodes();
     const selected = location.hash?.replace('#', '') || 'dashboard';
-    const titles = { dashboard: 'Ringkasan Pengelolaan Sistem', konten: 'Konten Web, Kelas & Materi', tugas: 'Pengelolaan LKPD & Soal', email: 'Pengumuman Pengguna', akun: 'Akun Firebase', backup: 'Backup & Data Sistem' };
+    const titles = { dashboard: 'Ringkasan Pengelolaan Sistem', konten: 'Konten Web, Kelas & Materi', anggota: 'Manajemen Anggota Kelas', audit: 'Riwayat Audit', tugas: 'Pengelolaan LKPD & Soal', email: 'Pengumuman Pengguna', akun: 'Akun Firebase', backup: 'Backup & Data Sistem' };
     panelTitle.innerText = titles[selected] || titles.dashboard;
     if (panelAction) {
         panelAction.innerText = selected === 'backup' || selected === 'dashboard' ? 'Backup Semua Data' : 'Kelola Sekarang';
@@ -1251,6 +1252,8 @@ function renderAdminView() {
         });
         renderGuruView();
     }
+    if (selected === 'anggota') renderClassMembersPanel(true);
+    if (selected === 'audit') renderAdminAuditLogs();
 
     navs.forEach(link => {
         const key = link.dataset.adminPanel;
@@ -1422,6 +1425,28 @@ function adminTaskFormMarkup(type, label, accent) {
 
 function adminPanelMarkup(panel) {
     const input = 'w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-rose-400';
+    if (panel === 'anggota') return `<div class='space-y-5'>
+        <section class='rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4'>
+            <div class='grid gap-3 sm:grid-cols-2'>
+                <label class='block text-xs font-bold text-slate-700'>Pilih kelas<select id='adminMemberClassSelect' onchange='renderClassMembersPanel(true)' class='${input} mt-1'></select></label>
+                <label class='block text-xs font-bold text-slate-700'>Cari nama atau email<input id='adminMemberSearch' oninput="filterClassMemberRows('admin')" class='${input} mt-1' placeholder='Ketik nama atau email'></label>
+            </div>
+            <p id='adminMemberCount' class='text-sm font-bold text-slate-700'>Pilih kelas untuk melihat anggota.</p>
+            <div id='adminMemberList' class='space-y-3'></div>
+        </section>
+        <section class='rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3'>
+            <h4 class='font-black text-slate-900'>Guru dan admin</h4>
+            <div id='adminStaffList' class='space-y-2'></div>
+        </section>
+        <section class='rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3'>
+            <h4 class='font-black text-slate-900'>Siswa yang belum tergabung di kelas</h4>
+            <div id='adminUnassignedStudentList' class='space-y-2'></div>
+        </section>
+    </div>`;
+    if (panel === 'audit') return `<section class='rounded-2xl border border-slate-200 bg-white p-4 sm:p-5'>
+        <div class='flex items-center justify-between gap-3'><div><h4 class='font-black text-slate-900'>Aktivitas keanggotaan dan akun</h4><p class='mt-1 text-xs text-slate-500'>Menampilkan hingga 100 catatan terbaru.</p></div><button type='button' onclick='renderAdminAuditLogs()' class='rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700'>Muat ulang</button></div>
+        <div id='adminAuditList' class='mt-4 space-y-3'></div>
+    </section>`;
     if (panel === 'tugas') return `<div class='space-y-5'>
         <p class='text-sm text-slate-600'>Kelola soal pembelajaran per kelas. Latihan dan evaluasi memiliki prasyarat LKPD yang dipilih.</p>
         ${adminTaskFormMarkup('Lkpd', 'LKPD', 'purple')}
@@ -1446,6 +1471,327 @@ function adminPanelMarkup(panel) {
     return `<div class='grid md:grid-cols-2 gap-4'><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.classes.length} Kelas</b><p class='text-sm text-slate-600 mt-2'>Kelas dapat dibuat dan dihapus dari tab Konten Web.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>Akun Firebase</b><p class='text-sm text-slate-600 mt-2'>Siswa mendaftar langsung; akun guru dan admin dibuat melalui Firebase Authentication dan Firestore.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.materiList.length + state.classes.reduce((n, c) => n + (c.materi || []).length, 0)} Materi</b><p class='text-sm text-slate-600 mt-2'>Gunakan tab Konten Web untuk mengelola materi per kelas.</p></div><div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'><b>${state.emailLogs.length} Pengumuman</b><p class='text-sm text-slate-600 mt-2'>Gunakan tab Email Pengguna untuk mengelola catatan pengumuman.</p></div></div>`;
 }
 
+function formatMembershipDate(value) {
+    const date = value?.toDate ? value.toDate() : value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('id-ID') : 'Tanggal tidak tersedia';
+}
+
+function getMemberSearchScope(scope) {
+    return scope === 'admin' ? 'admin' : 'teacher';
+}
+
+async function loadMembersForClass(classId) {
+    const [membershipSnapshot, legacySnapshot] = await Promise.all([
+        firebaseDb.collectionGroup('classMemberships').where('classId', '==', Number(classId)).get(),
+        firebaseDb.collection('classMembers').where('classId', '==', Number(classId)).get()
+    ]);
+    const memberMap = new Map();
+    membershipSnapshot.docs.forEach(document => {
+        const membership = document.data();
+        if (membership.studentUid) {
+            memberMap.set(String(membership.studentUid), { ...membership, joinedAt: membership.joinedAt, classId: Number(classId) });
+        }
+    });
+    legacySnapshot.docs.forEach(document => {
+        const membership = document.data();
+        if (!membership.studentUid) return;
+        const uid = String(membership.studentUid);
+        const previous = memberMap.get(uid);
+        if (!previous || !previous.joinedAt) {
+            memberMap.set(uid, { ...previous, ...membership, classId: Number(classId) });
+        }
+    });
+
+    return Promise.all([...memberMap.entries()].map(async ([uid, membership]) => {
+        const profileSnapshot = await firebaseDb.collection('users').doc(uid).get();
+        const profile = profileSnapshot.exists ? profileSnapshot.data() : {};
+        if (profile.role && profile.role !== 'student') return null;
+        return {
+            uid,
+            name: profile.name || membership.studentName || 'Nama tidak tersedia',
+            email: profile.email || membership.studentEmail || '',
+            joinedAt: membership.joinedAt,
+            classId: Number(classId),
+            role: 'student'
+        };
+    })).then(rows => rows.filter(Boolean).sort((left, right) => left.name.localeCompare(right.name, 'id')));
+}
+
+function renderMemberRows(scope, rows, classId) {
+    const list = document.getElementById(`${scope}MemberList`);
+    const count = document.getElementById(`${scope}MemberCount`);
+    if (!list || !count) return;
+    classMemberRows[getMemberSearchScope(scope)] = rows;
+    count.textContent = `${rows.length} siswa tergabung`;
+    if (!rows.length) {
+        list.innerHTML = '<p class="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">Belum ada siswa yang tergabung di kelas ini.</p>';
+        return;
+    }
+
+    list.innerHTML = rows.map(row => {
+        const searchText = `${row.name} ${row.email}`.toLowerCase();
+        const removeButton = `<button type="button" onclick="removeStudentFromClass('${encodeURIComponent(row.uid)}', ${classId})" class="rounded-lg border border-amber-200 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-50">Keluarkan dari kelas</button>`;
+        const deleteButton = `<button type="button" onclick="showAccountDeletionDialog('${encodeURIComponent(row.uid)}')" class="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Hapus akun siswa</button>`;
+        return `<article data-member-search="${escapeHtml(searchText)}" class="rounded-xl border border-slate-200 p-4">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0"><h4 class="truncate text-sm font-bold text-slate-900">${escapeHtml(row.name)}</h4><p class="break-all text-xs text-slate-600">${escapeHtml(row.email || 'Email tidak tersedia')}</p><p class="mt-1 text-[11px] text-slate-500">Bergabung: ${escapeHtml(formatMembershipDate(row.joinedAt))} · Status: Aktif</p></div>
+                <div class="flex flex-wrap gap-2">${removeButton}${deleteButton}</div>
+            </div>
+        </article>`;
+    }).join('');
+    filterClassMemberRows(scope);
+}
+
+async function renderClassMembersPanel(isAdmin) {
+    const scope = isAdmin ? 'admin' : 'teacher';
+    const selector = document.getElementById(`${scope}MemberClassSelect`);
+    const list = document.getElementById(`${scope}MemberList`);
+    const count = document.getElementById(`${scope}MemberCount`);
+    if (!selector || !list || !count) return;
+    if (!isFirebaseReady() || !firebaseAuth?.currentUser) {
+        count.textContent = 'Login Firebase diperlukan untuk memuat anggota kelas.';
+        list.innerHTML = '';
+        return;
+    }
+
+    const selectedId = selector.value;
+    selector.innerHTML = `<option value="">Pilih kelas</option>${state.classes.map(item => `<option value="${Number(item.id)}">${escapeHtml(item.nama)}</option>`).join('')}`;
+    if (state.classes.some(item => String(item.id) === selectedId)) selector.value = selectedId;
+    if (!selector.value && state.classes.length) selector.value = String(state.classes[0].id);
+    if (!selector.value) {
+        count.textContent = 'Belum ada kelas yang dapat dipilih.';
+        list.innerHTML = '<p class="text-sm text-slate-500">Buat kelas terlebih dahulu.</p>';
+        if (isAdmin) await renderAdminMemberOverview();
+        return;
+    }
+
+    const requestedClassId = Number(selector.value);
+    count.textContent = 'Memuat anggota kelas...';
+    list.innerHTML = '<p class="text-sm text-slate-500">Mengambil data anggota kelas.</p>';
+    try {
+        const rows = await loadMembersForClass(requestedClassId);
+        if (Number(selector.value) !== requestedClassId || !document.getElementById(`${scope}MemberList`)) return;
+        renderMemberRows(scope, rows, requestedClassId);
+    } catch (error) {
+        if (Number(selector.value) !== requestedClassId || !document.getElementById(`${scope}MemberList`)) return;
+        console.error('Gagal memuat anggota kelas:', error);
+        count.textContent = 'Anggota kelas gagal dimuat.';
+        list.innerHTML = `<p class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">Periksa koneksi dan Firestore Rules. ${escapeHtml(error.code || error.message || '')}</p>`;
+    }
+    if (isAdmin && Number(selector.value) === requestedClassId) await renderAdminMemberOverview();
+}
+
+function filterClassMemberRows(scope) {
+    const search = document.getElementById(`${scope}MemberSearch`)?.value.trim().toLowerCase() || '';
+    const count = document.getElementById(`${scope}MemberCount`);
+    const rows = classMemberRows[getMemberSearchScope(scope)] || [];
+    let visible = 0;
+    document.querySelectorAll(`#${scope}MemberList [data-member-search]`).forEach(element => {
+        const matches = element.dataset.memberSearch.includes(search);
+        element.classList.toggle('hidden', !matches);
+        if (matches) visible += 1;
+    });
+    if (count) count.textContent = search ? `${visible} dari ${rows.length} siswa cocok` : `${rows.length} siswa tergabung`;
+}
+
+async function renderAdminMemberOverview() {
+    const staffList = document.getElementById('adminStaffList');
+    const unassignedList = document.getElementById('adminUnassignedStudentList');
+    if (!staffList || !unassignedList) return;
+    staffList.innerHTML = '<p class="text-sm text-slate-500">Memuat akun.</p>';
+    unassignedList.innerHTML = '<p class="text-sm text-slate-500">Memuat daftar siswa.</p>';
+    try {
+        const [userSnapshot, membershipSnapshot, legacySnapshot] = await Promise.all([
+            firebaseDb.collection('users').get(),
+            firebaseDb.collectionGroup('classMemberships').get(),
+            firebaseDb.collection('classMembers').get()
+        ]);
+        const validClassIds = new Set(state.classes.map(item => Number(item.id)));
+        const memberUids = new Set();
+        membershipSnapshot.docs.forEach(document => {
+            const membership = document.data();
+            if (membership.studentUid && validClassIds.has(Number(membership.classId))) {
+                memberUids.add(String(membership.studentUid));
+            }
+        });
+        legacySnapshot.docs.forEach(document => {
+            const membership = document.data();
+            if (membership.studentUid && validClassIds.has(Number(membership.classId))) {
+                memberUids.add(String(membership.studentUid));
+            }
+        });
+        const profiles = userSnapshot.docs.map(document => ({
+            uid: document.id,
+            ...document.data()
+        }));
+        const staff = profiles.filter(profile => ['teacher', 'admin'].includes(profile.role));
+        managedUsersByUid = new Map(profiles.map(profile => [profile.uid, profile]));
+        staffList.innerHTML = staff.length ? staff.map(profile => renderAdminAccountRow(profile, true)).join('') : '<p class="text-sm text-slate-500">Belum ada akun guru/admin.</p>';
+
+        const unassigned = profiles.filter(profile => {
+            if (profile.role !== 'student' || memberUids.has(profile.uid)) return false;
+            const profileClassIds = [profile.classId, ...(Array.isArray(profile.classIds) ? profile.classIds : [])]
+                .map(Number).filter(Number.isFinite);
+            return !profileClassIds.some(classId => validClassIds.has(classId));
+        });
+        unassignedList.innerHTML = unassigned.length
+            ? unassigned.map(profile => renderAdminAccountRow(profile, false)).join('')
+            : '<p class="text-sm text-slate-500">Semua siswa sudah tergabung di kelas.</p>';
+    } catch (error) {
+        console.error('Gagal memuat ringkasan akun anggota:', error);
+        const message = escapeHtml(error.code || error.message || 'Kegagalan Firestore');
+        staffList.innerHTML = unassignedList.innerHTML = `<p class="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">Data akun gagal dimuat. ${message}</p>`;
+    }
+}
+
+let managedUsersByUid = new Map();
+
+function renderAdminAccountRow(profile, isStaff) {
+    const name = profile.name || 'Nama tidak tersedia';
+    const roleLabel = profile.role === 'admin' ? 'Admin' : profile.role === 'teacher' ? 'Guru' : 'Siswa';
+    const deleteButton = profile.uid === firebaseAuth?.currentUser?.uid
+        ? '<span class="text-xs font-bold text-slate-400">Akun Anda</span>'
+        : `<button type="button" onclick="showAccountDeletionDialog('${encodeURIComponent(profile.uid)}')" class="shrink-0 rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Hapus akun</button>`;
+    return `<article class="flex flex-col gap-3 rounded-xl border border-slate-200 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div class="min-w-0"><p class="text-sm font-bold text-slate-900">${escapeHtml(name)} <span class="ml-1 rounded bg-slate-100 px-2 py-0.5 text-[10px]">${roleLabel}</span></p><p class="break-all text-xs text-slate-600">${escapeHtml(profile.email || 'Email tidak tersedia')}</p></div>
+        ${isStaff ? deleteButton : `<div class="flex flex-wrap gap-2"><button type="button" onclick="showAccountDeletionDialog('${encodeURIComponent(profile.uid)}')" class="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Hapus akun siswa</button></div>`}
+    </article>`;
+}
+
+async function callUserManagementApi(payload) {
+    if (!firebaseAuth?.currentUser) throw new Error('Sesi login berakhir. Login kembali lalu coba lagi.');
+    const token = await firebaseAuth.currentUser.getIdToken();
+    const response = await fetch('/api/manage-class-members', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Permintaan gagal (HTTP ${response.status}).`);
+    return result;
+}
+
+async function removeStudentFromClass(encodedUid, classId) {
+    const uid = decodeURIComponent(encodedUid);
+    const student = classMemberRows.teacher.concat(classMemberRows.admin).find(row => row.uid === uid);
+    const studentName = student?.name || 'siswa ini';
+    customConfirm(`Keluarkan ${studentName} dari kelas ${getClassName(classId)}? Akun, submission, dan nilainya tetap disimpan.`, async () => {
+        try {
+            await callUserManagementApi({ action: 'remove-class-member', studentUid: uid, classId });
+            customAlert(`${studentName} berhasil dikeluarkan dari kelas. Akun dan seluruh nilai tetap tersimpan.`, 'Anggota Dikeluarkan');
+            await renderClassMembersPanel(normalizeRole(state.currentUser?.role) === 'admin');
+        } catch (error) {
+            console.error('Gagal mengeluarkan anggota kelas:', error);
+            customAlert(error.message, 'Gagal Mengeluarkan Anggota');
+        }
+    }, 'Konfirmasi Pengeluaran');
+}
+
+function showAccountDeletionDialog(encodedUid) {
+    const uid = decodeURIComponent(encodedUid);
+    const profile = managedUsersByUid.get(uid)
+        || classMemberRows.teacher.concat(classMemberRows.admin).find(row => row.uid === uid);
+    if (!profile) {
+        customAlert('Data akun tidak ditemukan. Muat ulang daftar anggota lalu coba lagi.', 'Akun Tidak Ditemukan');
+        return;
+    }
+    const dialogId = `deleteAccountDialog_${Date.now()}`;
+    const role = profile.role || 'student';
+    const displayName = profile.name || profile.nama || 'Nama tidak tersedia';
+    const displayEmail = profile.email || 'Email tidak tersedia';
+    const overlay = document.createElement('div');
+    overlay.id = dialogId;
+    overlay.className = 'fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4';
+    overlay.innerHTML = `<section role="dialog" aria-modal="true" aria-labelledby="${dialogId}_title" class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+        <h2 id="${dialogId}_title" class="text-lg font-black text-rose-800">Hapus akun secara permanen?</h2>
+        <p class="mt-2 text-sm text-slate-700">Akun yang akan dihapus:</p>
+        <div class="mt-2 rounded-xl bg-slate-50 p-3 text-sm"><p class="font-bold">${escapeHtml(displayName)}</p><p class="break-all text-slate-600">${escapeHtml(displayEmail)}</p><p class="mt-1 text-xs text-slate-500">Peran: ${escapeHtml(role)}</p></div>
+        <p class="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">Penghapusan akun Firebase dan profil bersifat permanen.${role === 'student' ? ' Secara default seluruh pengerjaan dan nilai dipertahankan.' : ''}</p>
+        ${role === 'student' ? `<label class="mt-3 flex items-start gap-2 text-xs text-slate-700"><input id="${dialogId}_deleteSubmissions" type="checkbox" class="mt-0.5"><span>Hapus juga seluruh pengerjaan dan nilai siswa ini</span></label>` : ''}
+        <label class="mt-4 block text-xs font-bold text-slate-700">Ketik <code>HAPUS</code> atau email siswa untuk konfirmasi<input id="${dialogId}_confirmText" autocomplete="off" class="mt-1 w-full rounded-lg border border-slate-300 p-3 text-sm" placeholder="HAPUS"></label>
+        <p id="${dialogId}_error" class="mt-2 hidden text-xs text-rose-700"></p>
+        <div class="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" data-cancel class="rounded-lg bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-700">Batal</button><button type="button" data-delete disabled class="rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">Hapus permanen</button></div>
+    </section>`;
+    document.body.appendChild(overlay);
+    const confirmInput = overlay.querySelector(`#${dialogId}_confirmText`);
+    const deleteSubmissionsInput = overlay.querySelector(`#${dialogId}_deleteSubmissions`);
+    const deleteButton = overlay.querySelector('[data-delete]');
+    const cancelButton = overlay.querySelector('[data-cancel]');
+    const expectedEmail = String(profile.email || '').trim().toLowerCase();
+    const isConfirmed = () => {
+        const typed = confirmInput.value.trim();
+        return typed === 'HAPUS' || (expectedEmail && typed.toLowerCase() === expectedEmail);
+    };
+    confirmInput.addEventListener('input', () => {
+        deleteButton.disabled = !isConfirmed();
+    });
+    cancelButton.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', event => {
+        if (event.target === overlay) overlay.remove();
+    });
+    deleteButton.addEventListener('click', async () => {
+        if (!isConfirmed()) return;
+        deleteButton.disabled = true;
+        cancelButton.disabled = true;
+        deleteButton.textContent = 'Menghapus...';
+        try {
+            await callUserManagementApi({
+                action: 'delete-user',
+                targetUid: uid,
+                deleteSubmissions: Boolean(deleteSubmissionsInput?.checked)
+            });
+            overlay.remove();
+            customAlert(deleteSubmissionsInput?.checked
+                ? 'Akun berhasil dihapus. Profil, keanggotaan, pengerjaan, dan nilai siswa telah dihapus.'
+                : 'Akun berhasil dihapus. Keanggotaan dibersihkan dan pengerjaan serta nilai dipertahankan dengan penanda akun terhapus.',
+            'Akun Dihapus');
+            if (normalizeRole(state.currentUser?.role) === 'admin') {
+                if (document.getElementById('adminMemberClassSelect')) await renderClassMembersPanel(true);
+                else renderAdminView();
+            } else {
+                await renderClassMembersPanel(false);
+            }
+        } catch (error) {
+            console.error('Gagal menghapus akun:', error);
+            const errorElement = overlay.querySelector(`#${dialogId}_error`);
+            errorElement.textContent = error.message;
+            errorElement.classList.remove('hidden');
+            deleteButton.disabled = !isConfirmed();
+            cancelButton.disabled = false;
+            deleteButton.textContent = 'Hapus permanen';
+        }
+    });
+    confirmInput.focus();
+}
+
+async function renderAdminAuditLogs() {
+    const list = document.getElementById('adminAuditList');
+    if (!list) return;
+    list.innerHTML = '<p class="text-sm text-slate-500">Memuat riwayat audit.</p>';
+    try {
+        const snapshot = await firebaseDb.collection('auditLogs').orderBy('createdAt', 'desc').limit(100).get();
+        if (snapshot.empty) {
+            list.innerHTML = '<p class="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">Belum ada aktivitas tercatat.</p>';
+            return;
+        }
+        list.innerHTML = snapshot.docs.map(document => {
+            const item = document.data();
+            const action = item.action === 'delete-user' ? 'Penghapusan akun' : item.action === 'remove-class-member' ? 'Pengeluaran anggota dari kelas' : item.action || 'Aktivitas';
+            const status = item.status === 'complete' ? 'Selesai' : item.status === 'failed' ? `Gagal (${item.failedPhase || 'tidak diketahui'})` : 'Diproses';
+            const target = item.targetName || item.targetUid || 'Tidak tersedia';
+            const classLabel = item.className ? ` · Kelas: ${item.className}` : item.classId ? ` · ID kelas: ${item.classId}` : '';
+            const targetEmail = item.targetEmail ? ` · ${item.targetEmail}` : '';
+            return `<article class="rounded-xl border border-slate-200 p-3"><div class="flex flex-col gap-1 sm:flex-row sm:justify-between"><b class="text-sm text-slate-900">${escapeHtml(action)}</b><span class="text-xs text-slate-500">${escapeHtml(formatMembershipDate(item.createdAt))}</span></div><p class="mt-1 break-all text-xs text-slate-700">Target: ${escapeHtml(target)}${targetEmail ? escapeHtml(targetEmail) : ''}${classLabel ? escapeHtml(classLabel) : ''}</p><p class="mt-1 text-[11px] text-slate-500">Pelaku UID: ${escapeHtml(item.actorUid || '-')} · Status: ${escapeHtml(status)}</p></article>`;
+        }).join('');
+    } catch (error) {
+        console.error('Gagal memuat riwayat audit:', error);
+        list.innerHTML = `<p class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">Riwayat gagal dimuat. Pastikan Anda login sebagai admin dan aturan Firestore terbaru sudah aktif. ${escapeHtml(error.code || error.message || '')}</p>`;
+    }
+}
+
 async function adminSaveClass(e) { e.preventDefault(); state.classes.unshift({ id: Date.now(), nama: document.getElementById('adminClassName').value, deskripsi: document.getElementById('adminClassDescription').value, accessCode: generateClassAccessCode(), materi: [] }); await saveLearningContent(); renderAdminView(); }
 function adminDeleteClass(id) { customConfirm('Hapus kelas beserta materi di dalamnya?', async () => { state.classes = state.classes.filter(c => c.id !== id); state.materiList = state.materiList.filter(m => m.classId !== id); removeClassNotifications(id); await saveLearningContent(); renderAdminView(); }); }
 async function adminSaveMaterial(e) { e.preventDefault(); const c = state.classes.find(item => item.id === Number(document.getElementById('adminMaterialClass').value)); if (!c) return; const material = { id: Date.now(), judul: document.getElementById('adminMaterialTitle').value, deskripsi: document.getElementById('adminMaterialDescription').value, link: document.getElementById('adminMaterialLink').value, classId: c.id }; c.materi = c.materi || []; c.materi.unshift(material); state.materiList.unshift({ id: material.id, judul: material.judul, deskripsi: material.deskripsi, yt: '', file: material.link, classId: c.id }); addStudentNotification('Materi', material.judul, c.id, material.id, 'Materi'); await saveLearningContent(); renderAdminView(); }
@@ -1459,7 +1805,9 @@ function switchAdminPanel(panelKey) {
         tugas: 'tugas',
         email: 'email',
         akun: 'akun',
-        backup: 'backup'
+        backup: 'backup',
+        anggota: 'anggota',
+        audit: 'audit'
     };
     const selected = adminMap[panelKey] || 'dashboard';
     if (window.location.hash !== `#${selected}`) window.location.hash = selected;
@@ -2062,7 +2410,10 @@ function switchTeacherTab(tabName) {
     }
 
     const activePanel = document.getElementById(`subGuru${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`);
-    if (activePanel) activePanel.classList.remove('hidden');
+    if (activePanel) {
+        activePanel.classList.remove('hidden');
+        if (tabName === 'anggota') renderClassMembersPanel(false);
+    }
 }
 
 function getClassName(classId) {
@@ -3650,11 +4001,11 @@ window.addEventListener('hashchange', () => {
         switchStudentTab(getTabFromHash('materi', ['kelas', 'notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
     }
     if (normalizeRole(state.currentUser?.role) === 'teacher' && window.location.pathname.endsWith('dashboard_guru.html')) {
-        switchTeacherTab(getTabFromHash('materi', ['kelas', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
+        switchTeacherTab(getTabFromHash('materi', ['kelas', 'anggota', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
     }
     if (normalizeRole(state.currentUser?.role) === 'admin' && window.location.pathname.endsWith('dashboard_admin.html')) {
         const selected = window.location.hash.replace('#', '') || 'dashboard';
-        if (['dashboard', 'konten', 'tugas', 'email', 'akun', 'device', 'backup'].includes(selected)) {
+        if (['dashboard', 'konten', 'anggota', 'audit', 'tugas', 'email', 'akun', 'device', 'backup'].includes(selected)) {
             renderAdminView();
         }
     }

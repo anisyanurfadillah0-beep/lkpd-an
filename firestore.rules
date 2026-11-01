@@ -72,10 +72,14 @@ service cloud.firestore {
     match /users/{uid} {
       allow get: if isSignedIn() && (
         request.auth.uid == uid ||
-        roleOf(request.auth.uid) == 'admin'
+        roleOf(request.auth.uid) == 'admin' ||
+        (roleOf(request.auth.uid) == 'teacher' && resource.data.role == 'student')
       );
 
-      allow list: if isSignedIn() && roleOf(request.auth.uid) == 'admin';
+      allow list: if isSignedIn() && (
+        roleOf(request.auth.uid) == 'admin' ||
+        (roleOf(request.auth.uid) == 'teacher' && resource.data.role == 'student')
+      );
 
       allow create: if isSignedIn()
         && request.auth.uid == uid
@@ -107,6 +111,7 @@ service cloud.firestore {
         allow list: if isTeacherOrAdmin();
         allow create: if isSignedIn()
           && request.auth.uid == uid
+          && roleOf(request.auth.uid) == 'student'
           && request.resource.data.studentUid == uid
           && request.resource.data.classId is int
           && string(request.resource.data.classId) == classId
@@ -139,6 +144,7 @@ service cloud.firestore {
       allow list: if isTeacherOrAdmin();
       allow create: if isSignedIn()
         && request.resource.data.studentUid == request.auth.uid
+        && roleOf(request.auth.uid) == 'student'
         && request.resource.data.role == 'student'
         && request.resource.data.classId is int
         && request.resource.data.accessCode is string
@@ -204,6 +210,11 @@ service cloud.firestore {
         && validPrivateDocument(request.resource.data, docId)
         && request.resource.data.answers is list;
       allow delete: if isTeacherOrAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isSignedIn() && roleOf(request.auth.uid) == 'admin';
+      allow write: if false;
     }
 
     match /appData/{documentId} {
