@@ -1576,7 +1576,8 @@ async function renderClassMembersPanel(isAdmin) {
         if (Number(selector.value) !== requestedClassId || !document.getElementById(`${scope}MemberList`)) return;
         console.error('Gagal memuat anggota kelas:', error);
         count.textContent = 'Anggota kelas gagal dimuat.';
-        list.innerHTML = `<p class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">Periksa koneksi dan Firestore Rules. ${escapeHtml(error.code || error.message || '')}</p>`;
+        const errorDetails = [error.code, error.message].filter(Boolean).join(': ');
+        list.innerHTML = `<p class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">Anggota kelas gagal dimuat. ${escapeHtml(errorDetails || 'Periksa koneksi dan Firestore Rules.')}</p>`;
     }
     if (isAdmin && Number(selector.value) === requestedClassId) await renderAdminMemberOverview();
 }
@@ -1639,7 +1640,7 @@ async function renderAdminMemberOverview() {
             : '<p class="text-sm text-slate-500">Semua siswa sudah tergabung di kelas.</p>';
     } catch (error) {
         console.error('Gagal memuat ringkasan akun anggota:', error);
-        const message = escapeHtml(error.code || error.message || 'Kegagalan Firestore');
+        const message = escapeHtml([error.code, error.message].filter(Boolean).join(': ') || 'Kegagalan Firestore');
         staffList.innerHTML = unassignedList.innerHTML = `<p class="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">Data akun gagal dimuat. ${message}</p>`;
     }
 }
