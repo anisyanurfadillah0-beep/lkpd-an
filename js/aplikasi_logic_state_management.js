@@ -1376,7 +1376,8 @@ function importTaskRubricJson(type) {
         const answerKey = parsed.answerKey || parsed.answerKeys || parsed;
         const questions = document.querySelectorAll(`#form${type}Questions .question-editor`);
         const answers = answerKey.answers || answerKey.questions || [];
-        document.getElementById(`form${type}TotalPoin`).value = rubric.totalPoin ?? answerKey.totalPoin ?? '';
+        const totalPoinInput = document.getElementById(`form${type}TotalPoin`);
+        if (totalPoinInput) totalPoinInput.value = rubric.totalPoin ?? answerKey.totalPoin ?? '';
         questions.forEach((editor, index) => {
             const rubricQuestion = rubric[`q${index + 1}`] || {};
             let key = answers[index];
@@ -1412,7 +1413,7 @@ function adminTaskFormMarkup(type, label, accent) {
             <div class='grid gap-3 sm:grid-cols-2'><div><label class='mb-1 block text-xs font-bold text-slate-700'>Waktu dibuka:</label><input type='datetime-local' id='form${type}Open' required class='w-full rounded-xl border border-slate-300 p-3 text-sm'></div><div><label class='mb-1 block text-xs font-bold text-slate-700'>Batas waktu:</label><input type='datetime-local' id='form${type}Close' required class='w-full rounded-xl border border-slate-300 p-3 text-sm'></div></div>
             <div class='border-t border-slate-200 pt-3'><label class='mb-1 block text-xs font-bold text-slate-700'>Prompt AI (opsional):</label><div class='flex gap-2'><input id='form${type}Prompt' class='min-w-0 flex-1 rounded-xl border border-slate-300 p-3 text-sm' placeholder='Instruksi untuk membuat soal'><button type='button' onclick='generateSoalAI("${type}")' class='rounded-xl bg-${accent}-600 px-4 py-2 text-xs font-bold text-white'>Generate</button></div></div>
             <div><div class='mb-2 flex items-center justify-between'><label class='text-xs font-bold text-slate-700'>Daftar soal:</label><button type='button' onclick='addQuestionField("${type}")' class='text-xs font-bold text-${accent}-700'>+ Tambah Soal</button></div><div id='form${type}Questions' class='space-y-3'></div></div>
-            <div class='space-y-3 border-t border-slate-200 pt-4'><h5 class='text-sm font-black text-slate-900'>Kunci dan Rubrik Penilaian AI</h5><label class='block text-xs font-bold text-slate-700'>Total poin tugas<input id='form${type}TotalPoin' type='number' min='1' step='1' required class='mt-1 w-full rounded-xl border border-slate-300 p-3 text-sm' placeholder='Contoh: 100'></label><label class='block text-xs font-bold text-slate-700'>Impor JSON kunci/rubrik<textarea id='form${type}RubricImport' rows='3' class='mt-1 w-full rounded-xl border border-slate-300 p-3 font-mono text-xs' placeholder='Tempel dokumen gradingRubrics dan answerKeys'></textarea></label><button type='button' onclick='importTaskRubricJson("${type}")' class='rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-50'>Impor JSON dan validasi</button></div>
+            <div class='space-y-3 border-t border-slate-200 pt-4'><h5 class='text-sm font-black text-slate-900'>Kunci dan Rubrik Penilaian AI</h5><label class='block text-xs font-bold text-slate-700'>Total poin tugas (opsional; otomatis dihitung dari poin soal jika kosong)<input id='form${type}TotalPoin' type='number' min='1' step='1' class='mt-1 w-full rounded-xl border border-slate-300 p-3 text-sm' placeholder='Contoh: 100'></label><label class='block text-xs font-bold text-slate-700'>Impor JSON kunci/rubrik<textarea id='form${type}RubricImport' rows='3' class='mt-1 w-full rounded-xl border border-slate-300 p-3 font-mono text-xs' placeholder='Tempel dokumen gradingRubrics dan answerKeys'></textarea></label><button type='button' onclick='importTaskRubricJson("${type}")' class='rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-50'>Impor JSON dan validasi</button></div>
             <button type='submit' class='rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white'>Simpan ${label}</button>
         </form>
         <h5 class='mb-3 mt-5 text-sm font-extrabold text-slate-900'>${label} yang tersedia</h5><div id='guru${type}ListContainer' class='space-y-3'></div>
@@ -3297,10 +3298,10 @@ async function saveNewTask(e, type) {
 function collectTaskRubricDocuments(type, task) {
     const taskId = String(task.id || '').trim();
     if (!taskId) throw new Error('ID tugas kosong. Simpan ulang tugas agar ID dapat dibuat.');
-    const totalPoin = Number(document.getElementById(`form${type}TotalPoin`)?.value);
-    if (!Number.isInteger(totalPoin) || totalPoin <= 0) throw new Error('Total poin tugas harus berupa bilangan bulat lebih dari 0.');
     const editors = [...document.querySelectorAll(`#form${type}Questions .question-editor`)];
-    const rubric = { taskId, title: task.title, totalPoin };
+    const totalPoinInput = document.getElementById(`form${type}TotalPoin`);
+    const totalPoinValue = totalPoinInput?.value.trim();
+    const rubric = { taskId, title: task.title };
     const answers = [];
     let pointSum = 0;
 
@@ -3344,7 +3345,10 @@ function collectTaskRubricDocuments(type, task) {
     });
 
     if (editors.length !== task.questions.length) throw new Error('Jumlah editor soal berubah. Muat ulang form lalu coba lagi.');
+    const totalPoin = totalPoinValue ? Number(totalPoinValue) : pointSum;
+    if (!Number.isInteger(totalPoin) || totalPoin <= 0) throw new Error('Total poin tugas harus berupa bilangan bulat lebih dari 0.');
     if (pointSum !== totalPoin) throw new Error(`Jumlah poin seluruh soal (${pointSum}) harus sama dengan total poin tugas (${totalPoin}).`);
+    rubric.totalPoin = totalPoin;
     return {
         rubric,
         answerKey: { taskId, title: task.title, totalPoin, answers }
@@ -3399,7 +3403,8 @@ async function editTask(type, id) {
                 : []
         });
     });
-    document.getElementById(`form${type}TotalPoin`).value = rubric?.totalPoin ?? answerKey?.totalPoin ?? '';
+    const totalPoinInput = document.getElementById(`form${type}TotalPoin`);
+    if (totalPoinInput) totalPoinInput.value = rubric?.totalPoin ?? answerKey?.totalPoin ?? '';
     form.dataset.editingId = id;
     if (!isAdmin) switchTeacherTab(type.toLowerCase());
 }
