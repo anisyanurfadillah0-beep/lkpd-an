@@ -1880,9 +1880,11 @@ function selectStudentScheduleDay(dayId) {
 async function loadStudentSchedule() {
     const sessions = document.getElementById('studentScheduleSessions');
     const classLabel = document.getElementById('studentScheduleClassLabel');
+    const loadStatus = document.getElementById('studentScheduleLoadStatus');
     if (!sessions || !classLabel) return;
     if (!isFirebaseReady() || !firebaseAuth.currentUser) {
         sessions.textContent = 'Login Firebase diperlukan untuk melihat jadwal kelas.';
+        if (loadStatus) loadStatus.textContent = '';
         return;
     }
     const token = ++studentScheduleLoadToken;
@@ -1892,6 +1894,7 @@ async function loadStudentSchedule() {
         }, 60000);
     }
     sessions.textContent = 'Memuat jadwal kelas...';
+    if (loadStatus) loadStatus.textContent = '';
     studentScheduleItems = [];
     scheduleActiveDayByScope.student = getJakartaDay();
     const uid = firebaseAuth.currentUser.uid;
@@ -1924,9 +1927,10 @@ async function loadStudentSchedule() {
         if (!classId) {
             classLabel.textContent = 'Anda belum terhubung ke kelas.';
             sessions.textContent = 'Masuk ke kelas terlebih dahulu untuk melihat jadwal.';
+            if (loadStatus) loadStatus.textContent = 'Tidak ditemukan classId atau keanggotaan kelas pada profil Firestore siswa.';
             return;
         }
-        classLabel.textContent = `Jadwal kelas ${getClassName(classId)} · Waktu Asia/Jakarta`;
+        classLabel.textContent = `Jadwal kelas ${getClassName(classId)} (ID ${classId}) · Waktu Asia/Jakarta`;
         const snapshot = await firebaseDb.collection('schedules').doc(String(classId)).get();
         if (token !== studentScheduleLoadToken) return;
         studentScheduleItems = snapshot.exists && Array.isArray(snapshot.data().items) ? snapshot.data().items.filter(item =>
@@ -1935,12 +1939,22 @@ async function loadStudentSchedule() {
             && typeof item.startTime === 'string' && typeof item.endTime === 'string'
             && typeof item.subject === 'string'
         ) : [];
+        if (loadStatus) {
+            if (!snapshot.exists) {
+                loadStatus.textContent = `Dokumen schedules/${classId} belum ada. Pastikan jadwal disimpan untuk kelas dengan ID yang sama.`;
+            } else if (studentScheduleItems.length === 0) {
+                loadStatus.textContent = `Dokumen jadwal kelas ini sudah terbaca, tetapi belum berisi sesi.`;
+            } else {
+                loadStatus.textContent = `${snapshot.data().title || 'Jadwal Pelajaran'} · ${studentScheduleItems.length} sesi tersedia. Pilih tab hari untuk melihat sesi.`;
+            }
+        }
         renderStudentScheduleDays();
     } catch (error) {
         if (token !== studentScheduleLoadToken) return;
         console.error('Gagal memuat jadwal siswa:', error);
         classLabel.textContent = 'Jadwal kelas Anda.';
         sessions.textContent = `Jadwal gagal dimuat. ${error.code || 'error'}: ${error.message || 'Periksa koneksi dan izin Firestore.'}`;
+        if (loadStatus) loadStatus.textContent = 'Pastikan Rules terbaru sudah dipublikasikan di project Firebase yang sama.';
     }
 }
 

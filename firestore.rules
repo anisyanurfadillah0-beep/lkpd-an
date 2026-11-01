@@ -18,8 +18,13 @@ service cloud.firestore {
     }
 
     function hasClassMembership(classId) {
+      let studentProfile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
       return exists(/databases/$(database)/documents/users/$(request.auth.uid)/classMemberships/$(string(classId)))
-        || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('classId', 0) == int(classId);
+        || studentProfile.get('classId', 0) == int(classId)
+        || (
+          studentProfile.get('classIds', []) is list
+          && studentProfile.get('classIds', []).hasAny([int(classId)])
+        );
     }
 
     function classAccessCodeMatches(classId, accessCode) {
