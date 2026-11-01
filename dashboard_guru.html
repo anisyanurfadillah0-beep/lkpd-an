@@ -74,7 +74,8 @@
         <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-4 mb-6">
             <button onclick="switchTeacherTab('kelas')" id="tabGuruKelas" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">1. Manajemen Kelas</button>
             <button onclick="switchTeacherTab('anggota')" id="tabGuruAnggota" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">2. Anggota Kelas</button>
-            <button onclick="switchTeacherTab('materi')" id="tabGuruMateri" class="tab-guru-btn active px-4 py-2.5 rounded-xl text-xs font-bold transition bg-indigo-600 text-white shadow-md">3. Bahan Materi</button>
+            <button onclick="switchTeacherTab('jadwal')" id="tabGuruJadwal" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">3. Jadwal Pelajaran</button>
+            <button onclick="switchTeacherTab('materi')" id="tabGuruMateri" class="tab-guru-btn active px-4 py-2.5 rounded-xl text-xs font-bold transition bg-indigo-600 text-white shadow-md">4. Bahan Materi</button>
             <button onclick="switchTeacherTab('lkpd')" id="tabGuruLkpd" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">4. LKPD (Per Pertemuan)</button>
             <button onclick="switchTeacherTab('latihan')" id="tabGuruLatihan" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">5. Latihan (Per Materi)</button>
             <button onclick="switchTeacherTab('evaluasi')" id="tabGuruEvaluasi" class="tab-guru-btn px-4 py-2.5 rounded-xl text-xs font-bold transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50">6. Evaluasi (Per Materi)</button>
@@ -122,6 +123,8 @@
                 <div id="teacherMemberList" class="mt-3 space-y-3"></div>
             </section>
         </div>
+
+        <div id="subGuruJadwal" class="sub-guru-panel hidden space-y-6"></div>
 
         <!-- GURU SUB-TAB 1: KELOLA BAHAN MATERI -->
         <div id="subGuruMateri" class="sub-guru-panel space-y-6">

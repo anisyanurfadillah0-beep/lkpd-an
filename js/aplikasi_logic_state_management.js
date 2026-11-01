@@ -44,6 +44,26 @@ let submissionsUnsubscribe = null;
 let classAccessCodesSyncAvailable = true;
 let classAccessCodesWarningShown = false;
 const classMemberRows = { teacher: [], admin: [] };
+const SCHEDULE_DAYS = [
+    { id: 1, name: 'Senin' },
+    { id: 2, name: 'Selasa' },
+    { id: 3, name: 'Rabu' },
+    { id: 4, name: 'Kamis' },
+    { id: 5, name: 'Jumat' },
+    { id: 6, name: 'Sabtu' },
+    { id: 7, name: 'Minggu' }
+];
+let scheduleDraftByScope = {};
+let scheduleLoadedClassByScope = {};
+let scheduleLoadTokens = {};
+let scheduleActiveDayByScope = {
+    teacher: getJakartaDay(),
+    admin: getJakartaDay(),
+    student: getJakartaDay()
+};
+let studentScheduleItems = [];
+let studentScheduleLoadToken = 0;
+let studentScheduleClockInterval = null;
 
 function showClassAccessCodesSyncWarning() {
     if (classAccessCodesWarningShown) return;
@@ -1109,7 +1129,7 @@ function renderDashboardForRole(expectedRole) {
 
     if (normalizeRole(expectedRole) === 'student') {
         renderSiswaView();
-        switchStudentTab(getTabFromHash('materi', ['kelas', 'notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
+        switchStudentTab(getTabFromHash('materi', ['kelas', 'notifikasi', 'jadwal', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
     }
     if (normalizeRole(expectedRole) === 'teacher') {
         ['Lkpd', 'Latihan', 'Evaluasi'].forEach(type => {
@@ -1117,7 +1137,7 @@ function renderDashboardForRole(expectedRole) {
             if (container && container.children.length === 0) addQuestionField(type);
         });
         renderGuruView();
-        switchTeacherTab(getTabFromHash('materi', ['kelas', 'anggota', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
+        switchTeacherTab(getTabFromHash('materi', ['kelas', 'anggota', 'jadwal', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
     }
     if (normalizeRole(expectedRole) === 'admin') {
         renderAdminView();
@@ -1237,7 +1257,7 @@ function renderAdminView() {
     if (!panelTitle || !panelContent) return;
     ensureClassAccessCodes();
     const selected = location.hash?.replace('#', '') || 'dashboard';
-    const titles = { dashboard: 'Ringkasan Pengelolaan Sistem', konten: 'Konten Web, Kelas & Materi', anggota: 'Manajemen Anggota Kelas', audit: 'Riwayat Audit', tugas: 'Pengelolaan LKPD & Soal', email: 'Pengumuman Pengguna', akun: 'Akun Firebase', backup: 'Backup & Data Sistem' };
+    const titles = { dashboard: 'Ringkasan Pengelolaan Sistem', konten: 'Konten Web, Kelas & Materi', anggota: 'Manajemen Anggota Kelas', jadwal: 'Jadwal Pelajaran', audit: 'Riwayat Audit', tugas: 'Pengelolaan LKPD & Soal', email: 'Pengumuman Pengguna', akun: 'Akun Firebase', backup: 'Backup & Data Sistem' };
     panelTitle.innerText = titles[selected] || titles.dashboard;
     if (panelAction) {
         panelAction.innerText = selected === 'backup' || selected === 'dashboard' ? 'Backup Semua Data' : 'Kelola Sekarang';
@@ -1253,6 +1273,7 @@ function renderAdminView() {
         renderGuruView();
     }
     if (selected === 'anggota') renderClassMembersPanel(true);
+    if (selected === 'jadwal') initializeScheduleManager('admin');
     if (selected === 'audit') renderAdminAuditLogs();
 
     navs.forEach(link => {
@@ -1423,8 +1444,504 @@ function adminTaskFormMarkup(type, label, accent) {
     </section>`;
 }
 
+function getJakartaDateParts(date = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Jakarta',
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23'
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    const weekdayIds = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+    return {
+        day: weekdayIds[values.weekday] || 1,
+        time: `${values.hour}:${values.minute}`
+    };
+}
+
+function getJakartaDay() {
+    return getJakartaDateParts().day;
+}
+
+function scheduleManagerMarkup(scope) {
+    const input = 'w-full rounded-xl border border-slate-200 p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500';
+    const dayOptions = SCHEDULE_DAYS.map(day => `<option value="${day.id}">${day.name}</option>`).join('');
+    return `<section class="space-y-5">
+        <div class="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
+            <div class="grid gap-3 sm:grid-cols-2">
+                <label class="block text-xs font-bold text-slate-700">Pilih kelas
+                    <select id="${scope}ScheduleClassSelect" onchange="loadScheduleForManager('${scope}')" class="${input} mt-1"></select>
+                </label>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700" for="${scope}ScheduleTitle">Judul jadwal</label>
+                    <input id="${scope}ScheduleTitle" oninput="markScheduleDirty('${scope}')" class="${input} mt-1" value="Jadwal Pelajaran Minggu Ini" maxlength="120">
+                </div>
+            </div>
+            <div class="mt-4 flex flex-col gap-2 sm:flex-row">
+                <label class="min-w-0 flex-1 text-xs font-bold text-slate-700">Salin jadwal ke kelas lain
+                    <select id="${scope}ScheduleCopyTarget" class="${input} mt-1"></select>
+                </label>
+                <button type="button" onclick="copyScheduleToClass('${scope}')" class="self-end rounded-xl border border-indigo-200 px-4 py-3 text-xs font-bold text-indigo-700 hover:bg-indigo-50">Salin jadwal ke kelas lain</button>
+            </div>
+            <div id="${scope}ScheduleDayTabs" class="mt-5 flex gap-2 overflow-x-auto pb-2" role="tablist" aria-label="Hari jadwal"></div>
+            <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <h3 id="${scope}ScheduleDayTitle" class="text-base font-extrabold text-slate-900"></h3>
+                <button type="button" onclick="clearScheduleDay('${scope}')" class="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Kosongkan hari ini</button>
+            </div>
+            <div id="${scope}ScheduleSessionList" class="mt-3 space-y-3"></div>
+            <p id="${scope}ScheduleStatus" class="mt-4 text-sm" role="status" aria-live="polite"></p>
+        </div>
+        <form onsubmit="saveScheduleSession(event, '${scope}')" class="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
+            <div class="mb-4">
+                <h3 id="${scope}ScheduleFormTitle" class="text-base font-extrabold text-slate-900">Tambah sesi</h3>
+                <p class="mt-1 text-xs text-slate-500">Sesi yang ditambahkan atau diubah menjadi draft. Tekan Simpan Jadwal untuk menerbitkannya.</p>
+            </div>
+            <input id="${scope}ScheduleItemId" type="hidden">
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label class="text-xs font-bold text-slate-700">Hari<select id="${scope}ScheduleDay" required onchange="checkScheduleOverlap('${scope}')" class="${input} mt-1">${dayOptions}</select></label>
+                <label class="text-xs font-bold text-slate-700">Jam mulai<input id="${scope}ScheduleStart" type="time" required onchange="checkScheduleOverlap('${scope}')" oninput="checkScheduleOverlap('${scope}')" class="${input} mt-1"></label>
+                <label class="text-xs font-bold text-slate-700">Jam selesai<input id="${scope}ScheduleEnd" type="time" required onchange="checkScheduleOverlap('${scope}')" oninput="checkScheduleOverlap('${scope}')" class="${input} mt-1"></label>
+                <label class="text-xs font-bold text-slate-700">Mata pelajaran<input id="${scope}ScheduleSubject" required maxlength="120" class="${input} mt-1" placeholder="Contoh: Matematika"></label>
+                <label class="text-xs font-bold text-slate-700">Nama guru (opsional)<input id="${scope}ScheduleTeacher" maxlength="120" class="${input} mt-1" placeholder="Nama guru"></label>
+                <label class="text-xs font-bold text-slate-700">Ruang atau tautan (opsional)<input id="${scope}ScheduleRoom" maxlength="300" class="${input} mt-1" placeholder="Ruang kelas / tautan daring"></label>
+                <label class="text-xs font-bold text-slate-700 sm:col-span-2">Catatan (opsional)<input id="${scope}ScheduleNote" maxlength="500" class="${input} mt-1" placeholder="Catatan tambahan"></label>
+            </div>
+            <p id="${scope}ScheduleOverlapWarning" class="mt-3 hidden rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800" role="status"></p>
+            <div class="mt-4 flex flex-wrap gap-2">
+                <button id="${scope}ScheduleSessionSubmit" type="submit" class="rounded-xl bg-indigo-600 px-4 py-3 text-xs font-bold text-white hover:bg-indigo-700">Tambah sesi ke draft</button>
+                <button id="${scope}ScheduleCancelEdit" type="button" onclick="resetScheduleForm('${scope}')" class="hidden rounded-xl border border-slate-200 px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50">Batal ubah</button>
+                <button type="button" onclick="saveClassSchedule('${scope}')" class="rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white hover:bg-slate-800">Simpan Jadwal</button>
+            </div>
+        </form>
+    </section>`;
+}
+
+function setScheduleStatus(scope, message, isError = false) {
+    const status = document.getElementById(`${scope}ScheduleStatus`);
+    if (!status) return;
+    status.textContent = message;
+    status.className = `mt-4 text-sm ${isError ? 'text-rose-700' : 'text-emerald-700'}`;
+}
+
+function getScheduleDraft(scope) {
+    if (!scheduleDraftByScope[scope]) scheduleDraftByScope[scope] = { title: 'Jadwal Pelajaran Minggu Ini', items: [] };
+    return scheduleDraftByScope[scope];
+}
+
+function markScheduleDirty(scope) {
+    const draft = getScheduleDraft(scope);
+    draft.dirty = true;
+    const title = document.getElementById(`${scope}ScheduleTitle`)?.value.trim();
+    if (title) draft.title = title;
+}
+
+function populateScheduleClassOptions(scope) {
+    const selector = document.getElementById(`${scope}ScheduleClassSelect`);
+    const copySelector = document.getElementById(`${scope}ScheduleCopyTarget`);
+    if (!selector || !copySelector) return;
+    const previousClassId = selector.value || scheduleLoadedClassByScope[scope] || '';
+    selector.innerHTML = state.classes.map(item => `<option value="${Number(item.id)}">${escapeHtml(item.nama)}</option>`).join('');
+    if (state.classes.some(item => String(item.id) === previousClassId)) selector.value = previousClassId;
+    else if (state.classes.length) selector.value = String(state.classes[0].id);
+    if (!state.classes.length) selector.innerHTML = '<option value="">Belum ada kelas</option>';
+
+    const selectedClassId = selector.value;
+    copySelector.innerHTML = state.classes
+        .filter(item => String(item.id) !== selectedClassId)
+        .map(item => `<option value="${Number(item.id)}">${escapeHtml(item.nama)}</option>`).join('');
+    if (!copySelector.options.length) copySelector.innerHTML = '<option value="">Tidak ada kelas lain</option>';
+}
+
+function initializeScheduleManager(scope) {
+    const container = scope === 'teacher'
+        ? document.getElementById('subGuruJadwal')
+        : document.getElementById('adminDetailContent');
+    if (scope === 'teacher' && container && !container.querySelector(`#${scope}ScheduleClassSelect`)) {
+        container.innerHTML = scheduleManagerMarkup(scope);
+    }
+    if (!document.getElementById(`${scope}ScheduleClassSelect`)) return;
+    populateScheduleClassOptions(scope);
+    const titleInput = document.getElementById(`${scope}ScheduleTitle`);
+    if (titleInput) titleInput.value = getScheduleDraft(scope).title;
+    renderScheduleManagerDay(scope);
+    const classId = document.getElementById(`${scope}ScheduleClassSelect`).value;
+    if (classId && scheduleLoadedClassByScope[scope] !== classId) loadScheduleForManager(scope);
+}
+
+async function loadScheduleForManager(scope) {
+    const selector = document.getElementById(`${scope}ScheduleClassSelect`);
+    if (!selector || !selector.value) {
+        scheduleDraftByScope[scope] = { title: 'Jadwal Pelajaran Minggu Ini', items: [] };
+        scheduleLoadedClassByScope[scope] = '';
+        renderScheduleManagerDay(scope);
+        setScheduleStatus(scope, 'Buat atau pilih kelas terlebih dahulu.', true);
+        return;
+    }
+    const previousClassId = scheduleLoadedClassByScope[scope];
+    if (previousClassId && previousClassId !== selector.value && scheduleDraftByScope[scope]?.dirty) {
+        if (!window.confirm('Draft jadwal belum disimpan. Ganti kelas dan buang perubahan draft?')) {
+            selector.value = previousClassId;
+            return;
+        }
+    }
+    const classId = selector.value;
+    populateScheduleClassOptions(scope);
+    const token = (scheduleLoadTokens[scope] || 0) + 1;
+    scheduleLoadTokens[scope] = token;
+    scheduleLoadedClassByScope[scope] = classId;
+    scheduleDraftByScope[scope] = { title: 'Jadwal Pelajaran Minggu Ini', items: [], dirty: false };
+    renderScheduleManagerDay(scope);
+    setScheduleStatus(scope, 'Memuat jadwal...');
+    const titleInput = document.getElementById(`${scope}ScheduleTitle`);
+    if (titleInput) titleInput.value = 'Jadwal Pelajaran Minggu Ini';
+    try {
+        const snapshot = await firebaseDb.collection('schedules').doc(String(classId)).get();
+        if (scheduleLoadTokens[scope] !== token || selector.value !== classId) return;
+        const data = snapshot.exists ? snapshot.data() : null;
+        scheduleDraftByScope[scope] = {
+            title: typeof data?.title === 'string' ? data.title : 'Jadwal Pelajaran Minggu Ini',
+            items: Array.isArray(data?.items) ? data.items.filter(item =>
+                item && typeof item.id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(item.id) && Number.isInteger(Number(item.day))
+                && Number(item.day) >= 1 && Number(item.day) <= 7
+                && typeof item.startTime === 'string' && typeof item.endTime === 'string'
+                && typeof item.subject === 'string'
+            ) : [],
+            dirty: false
+        };
+        if (titleInput) titleInput.value = scheduleDraftByScope[scope].title;
+        renderScheduleManagerDay(scope);
+        setScheduleStatus(scope, snapshot.exists ? 'Jadwal berhasil dimuat.' : 'Belum ada jadwal tersimpan untuk kelas ini.');
+    } catch (error) {
+        if (scheduleLoadTokens[scope] !== token) return;
+        console.error('Gagal memuat jadwal kelas:', error);
+        setScheduleStatus(scope, `Jadwal gagal dimuat. ${error.code || 'error'}: ${error.message || 'Periksa koneksi dan izin Firestore.'}`, true);
+    }
+}
+
+function renderScheduleManagerDay(scope) {
+    const tabs = document.getElementById(`${scope}ScheduleDayTabs`);
+    const title = document.getElementById(`${scope}ScheduleDayTitle`);
+    const list = document.getElementById(`${scope}ScheduleSessionList`);
+    if (!tabs || !title || !list) return;
+    const activeDay = scheduleActiveDayByScope[scope] || getJakartaDay();
+    const draft = getScheduleDraft(scope);
+    tabs.innerHTML = SCHEDULE_DAYS.map(day => `<button type="button" role="tab" aria-selected="${day.id === activeDay}" onclick="selectScheduleManagerDay('${scope}', ${day.id})" class="shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${day.id === activeDay ? 'bg-indigo-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}">${day.name}${day.id === getJakartaDay() ? ' · Hari ini' : ''}</button>`).join('');
+    const day = SCHEDULE_DAYS.find(item => item.id === activeDay);
+    title.textContent = day?.name || '';
+    const items = draft.items.filter(item => Number(item.day) === activeDay)
+        .sort((left, right) => left.startTime.localeCompare(right.startTime));
+    list.innerHTML = items.length ? items.map(item => `<article class="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-start sm:justify-between">
+        <div class="min-w-0">
+            <p class="text-sm font-extrabold text-slate-900">${escapeHtml(item.subject)}</p>
+            <p class="mt-1 text-xs font-bold text-indigo-700">${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}${item.teacherName ? ` · ${escapeHtml(item.teacherName)}` : ''}</p>
+            ${item.room ? `<p class="mt-1 break-all text-xs text-slate-600">${escapeHtml(item.room)}</p>` : ''}
+            ${item.note ? `<p class="mt-1 whitespace-pre-wrap text-xs text-slate-500">${escapeHtml(item.note)}</p>` : ''}
+        </div>
+        <div class="flex shrink-0 gap-2">
+            <button type="button" onclick="editScheduleItem('${scope}', '${encodeURIComponent(item.id)}')" class="rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50">Ubah</button>
+            <button type="button" onclick="deleteScheduleItem('${scope}', '${encodeURIComponent(item.id)}')" class="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Hapus</button>
+        </div>
+    </article>`).join('') : '<p class="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">Belum ada sesi pada hari ini.</p>';
+}
+
+function selectScheduleManagerDay(scope, dayId) {
+    scheduleActiveDayByScope[scope] = dayId;
+    renderScheduleManagerDay(scope);
+}
+
+function createScheduleItemId() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `schedule-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function checkScheduleOverlap(scope) {
+    const warning = document.getElementById(`${scope}ScheduleOverlapWarning`);
+    if (!warning) return;
+    const day = Number(document.getElementById(`${scope}ScheduleDay`)?.value);
+    const start = document.getElementById(`${scope}ScheduleStart`)?.value || '';
+    const end = document.getElementById(`${scope}ScheduleEnd`)?.value || '';
+    const editingId = document.getElementById(`${scope}ScheduleItemId`)?.value || '';
+    const overlaps = getScheduleDraft(scope).items.filter(item =>
+        Number(item.day) === day && item.id !== editingId
+        && start < item.endTime && item.startTime < end
+    );
+    warning.classList.toggle('hidden', overlaps.length === 0);
+    warning.textContent = overlaps.length
+        ? `Peringatan: waktu bertabrakan dengan ${overlaps.map(item => `${item.subject} (${item.startTime}–${item.endTime})`).join(', ')}. Sesi tetap dapat ditambahkan.`
+        : '';
+}
+
+function saveScheduleSession(event, scope) {
+    event.preventDefault();
+    const day = Number(document.getElementById(`${scope}ScheduleDay`).value);
+    const startTime = document.getElementById(`${scope}ScheduleStart`).value;
+    const endTime = document.getElementById(`${scope}ScheduleEnd`).value;
+    const subject = document.getElementById(`${scope}ScheduleSubject`).value.trim();
+    if (!subject) {
+        setScheduleStatus(scope, 'Nama mata pelajaran wajib diisi.', true);
+        return;
+    }
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime) || startTime >= endTime) {
+        setScheduleStatus(scope, 'Jam mulai harus lebih awal daripada jam selesai.', true);
+        return;
+    }
+    const itemIdInput = document.getElementById(`${scope}ScheduleItemId`);
+    const id = itemIdInput.value || createScheduleItemId();
+    const draft = getScheduleDraft(scope);
+    const existingIndex = draft.items.findIndex(item => item.id === id);
+    const item = {
+        id,
+        day,
+        startTime,
+        endTime,
+        subject,
+        teacherName: document.getElementById(`${scope}ScheduleTeacher`).value.trim(),
+        room: document.getElementById(`${scope}ScheduleRoom`).value.trim(),
+        note: document.getElementById(`${scope}ScheduleNote`).value.trim()
+    };
+    if (existingIndex >= 0) draft.items[existingIndex] = item;
+    else draft.items.push(item);
+    draft.dirty = true;
+    scheduleActiveDayByScope[scope] = day;
+    renderScheduleManagerDay(scope);
+    resetScheduleForm(scope);
+    const overlaps = draft.items.filter(other =>
+        other.id !== id && Number(other.day) === day
+        && startTime < other.endTime && other.startTime < endTime
+    );
+    setScheduleStatus(scope, overlaps.length
+        ? `Draft diperbarui, tetapi ada ${overlaps.length} jadwal yang bertabrakan. Tekan Simpan Jadwal untuk menyimpan.`
+        : 'Sesi ditambahkan ke draft. Tekan Simpan Jadwal untuk menyimpan.');
+}
+
+function resetScheduleForm(scope) {
+    const form = document.querySelector(`#${scope}ScheduleItemId`)?.closest('form');
+    if (form) form.reset();
+    const dayInput = document.getElementById(`${scope}ScheduleDay`);
+    if (dayInput) dayInput.value = String(scheduleActiveDayByScope[scope] || getJakartaDay());
+    const itemId = document.getElementById(`${scope}ScheduleItemId`);
+    if (itemId) itemId.value = '';
+    const formTitle = document.getElementById(`${scope}ScheduleFormTitle`);
+    const submit = document.getElementById(`${scope}ScheduleSessionSubmit`);
+    const cancel = document.getElementById(`${scope}ScheduleCancelEdit`);
+    if (formTitle) formTitle.textContent = 'Tambah sesi';
+    if (submit) submit.textContent = 'Tambah sesi ke draft';
+    cancel?.classList.add('hidden');
+    const warning = document.getElementById(`${scope}ScheduleOverlapWarning`);
+    warning?.classList.add('hidden');
+    if (warning) warning.textContent = '';
+}
+
+function editScheduleItem(scope, encodedId) {
+    const id = decodeURIComponent(encodedId);
+    const item = getScheduleDraft(scope).items.find(candidate => candidate.id === id);
+    if (!item) return;
+    document.getElementById(`${scope}ScheduleItemId`).value = item.id;
+    document.getElementById(`${scope}ScheduleDay`).value = item.day;
+    document.getElementById(`${scope}ScheduleStart`).value = item.startTime;
+    document.getElementById(`${scope}ScheduleEnd`).value = item.endTime;
+    document.getElementById(`${scope}ScheduleSubject`).value = item.subject;
+    document.getElementById(`${scope}ScheduleTeacher`).value = item.teacherName || '';
+    document.getElementById(`${scope}ScheduleRoom`).value = item.room || '';
+    document.getElementById(`${scope}ScheduleNote`).value = item.note || '';
+    document.getElementById(`${scope}ScheduleFormTitle`).textContent = 'Ubah sesi';
+    document.getElementById(`${scope}ScheduleSessionSubmit`).textContent = 'Perbarui sesi di draft';
+    document.getElementById(`${scope}ScheduleCancelEdit`).classList.remove('hidden');
+    checkScheduleOverlap(scope);
+    document.getElementById(`${scope}ScheduleSubject`).focus();
+}
+
+function deleteScheduleItem(scope, encodedId) {
+    const id = decodeURIComponent(encodedId);
+    const draft = getScheduleDraft(scope);
+    draft.items = draft.items.filter(item => item.id !== id);
+    draft.dirty = true;
+    renderScheduleManagerDay(scope);
+    setScheduleStatus(scope, 'Sesi dihapus dari draft. Tekan Simpan Jadwal untuk menerapkan perubahan.');
+}
+
+function clearScheduleDay(scope) {
+    const day = scheduleActiveDayByScope[scope];
+    const draft = getScheduleDraft(scope);
+    const count = draft.items.filter(item => Number(item.day) === day).length;
+    if (!count) {
+        setScheduleStatus(scope, 'Hari ini sudah kosong.');
+        return;
+    }
+    if (!window.confirm(`Kosongkan ${SCHEDULE_DAYS[day - 1].name} pada draft jadwal ini? Perubahan berlaku setelah disimpan.`)) return;
+    draft.items = draft.items.filter(item => Number(item.day) !== day);
+    draft.dirty = true;
+    renderScheduleManagerDay(scope);
+    setScheduleStatus(scope, `${SCHEDULE_DAYS[day - 1].name} dikosongkan pada draft. Tekan Simpan Jadwal untuk menerapkan perubahan.`);
+}
+
+async function saveClassSchedule(scope) {
+    const classId = Number(document.getElementById(`${scope}ScheduleClassSelect`)?.value);
+    const draft = getScheduleDraft(scope);
+    if (!Number.isInteger(classId) || classId <= 0) {
+        setScheduleStatus(scope, 'Pilih kelas yang valid terlebih dahulu.', true);
+        return;
+    }
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) {
+        setScheduleStatus(scope, 'Sesi Firebase tidak tersedia. Login kembali lalu coba lagi.', true);
+        return;
+    }
+    if (draft.items.length > 100) {
+        setScheduleStatus(scope, 'Jadwal melebihi batas 100 sesi per kelas.', true);
+        return;
+    }
+    const title = document.getElementById(`${scope}ScheduleTitle`).value.trim();
+    try {
+        await firebaseDb.collection('schedules').doc(String(classId)).set({
+            classId,
+            title: title || 'Jadwal Pelajaran Minggu Ini',
+            items: draft.items,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedBy: firebaseAuth.currentUser.uid
+        });
+        draft.title = title || 'Jadwal Pelajaran Minggu Ini';
+        draft.dirty = false;
+        setScheduleStatus(scope, 'Jadwal berhasil disimpan ke Firestore.');
+    } catch (error) {
+        console.error('Gagal menyimpan jadwal kelas:', error);
+        setScheduleStatus(scope, `Jadwal gagal disimpan. ${error.code || 'error'}: ${error.message || 'Periksa koneksi dan Firestore Rules.'}`, true);
+    }
+}
+
+async function copyScheduleToClass(scope) {
+    const sourceId = document.getElementById(`${scope}ScheduleClassSelect`)?.value;
+    const targetId = document.getElementById(`${scope}ScheduleCopyTarget`)?.value;
+    if (!sourceId || !targetId || sourceId === targetId) {
+        setScheduleStatus(scope, 'Pilih kelas tujuan yang berbeda.', true);
+        return;
+    }
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) {
+        setScheduleStatus(scope, 'Sesi Firebase tidak tersedia. Login kembali lalu coba lagi.', true);
+        return;
+    }
+    const source = getScheduleDraft(scope);
+    if (source.items.length > 100) {
+        setScheduleStatus(scope, 'Jadwal melebihi batas 100 sesi per kelas.', true);
+        return;
+    }
+    const targetClass = state.classes.find(item => String(item.id) === targetId);
+    if (!window.confirm(`Salin ${source.items.length} sesi ke ${targetClass?.nama || 'kelas tujuan'} dan mengganti jadwal tujuan yang sudah ada?`)) return;
+    try {
+        await firebaseDb.collection('schedules').doc(String(targetId)).set({
+            classId: Number(targetId),
+            title: source.title || 'Jadwal Pelajaran Minggu Ini',
+            items: source.items.map(item => ({ ...item, id: createScheduleItemId() })),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedBy: firebaseAuth.currentUser.uid
+        });
+        setScheduleStatus(scope, `Jadwal berhasil disalin ke ${targetClass?.nama || 'kelas tujuan'}.`);
+    } catch (error) {
+        console.error('Gagal menyalin jadwal kelas:', error);
+        setScheduleStatus(scope, `Jadwal gagal disalin. ${error.code || 'error'}: ${error.message || 'Periksa koneksi dan Firestore Rules.'}`, true);
+    }
+}
+
+function renderStudentScheduleDays() {
+    const tabs = document.getElementById('studentScheduleDayTabs');
+    const sessions = document.getElementById('studentScheduleSessions');
+    if (!tabs || !sessions) return;
+    const today = getJakartaDay();
+    const selectedDay = scheduleActiveDayByScope.student || today;
+    const now = getJakartaDateParts();
+    tabs.innerHTML = SCHEDULE_DAYS.map(day => `<button type="button" role="tab" aria-selected="${day.id === selectedDay}" onclick="selectStudentScheduleDay(${day.id})" class="shrink-0 rounded-xl px-3 py-2.5 text-xs font-bold ${day.id === selectedDay ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}">${day.name}${day.id === today ? ' · Hari ini' : ''}</button>`).join('');
+    const items = studentScheduleItems.filter(item => Number(item.day) === selectedDay)
+        .sort((left, right) => left.startTime.localeCompare(right.startTime));
+    if (!items.length) {
+        sessions.innerHTML = `<p class="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">${selectedDay === today ? 'Belum ada jadwal untuk hari ini.' : `Belum ada jadwal untuk hari ${SCHEDULE_DAYS[selectedDay - 1].name}.`}</p>`;
+        return;
+    }
+    sessions.innerHTML = items.map(item => {
+        const ongoing = selectedDay === now.day && item.startTime <= now.time && now.time < item.endTime;
+        return `<article class="rounded-xl border ${ongoing ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-slate-50'} p-4">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div class="min-w-0">
+                    <p class="text-sm font-extrabold text-slate-900">${escapeHtml(item.subject)}</p>
+                    <p class="mt-1 text-xs font-bold text-blue-700">${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)}${item.teacherName ? ` · ${escapeHtml(item.teacherName)}` : ''}</p>
+                    ${item.room ? `<p class="mt-1 break-all text-xs text-slate-600">${escapeHtml(item.room)}</p>` : ''}
+                    ${item.note ? `<p class="mt-1 whitespace-pre-wrap text-xs text-slate-500">${escapeHtml(item.note)}</p>` : ''}
+                </div>
+                ${ongoing ? '<span class="w-fit rounded-full bg-emerald-600 px-3 py-1 text-[10px] font-extrabold text-white">Sedang berlangsung</span>' : ''}
+            </div>
+        </article>`;
+    }).join('');
+}
+
+function selectStudentScheduleDay(dayId) {
+    scheduleActiveDayByScope.student = dayId;
+    renderStudentScheduleDays();
+}
+
+async function loadStudentSchedule() {
+    const sessions = document.getElementById('studentScheduleSessions');
+    const classLabel = document.getElementById('studentScheduleClassLabel');
+    if (!sessions || !classLabel) return;
+    if (!isFirebaseReady() || !firebaseAuth.currentUser) {
+        sessions.textContent = 'Login Firebase diperlukan untuk melihat jadwal kelas.';
+        return;
+    }
+    const token = ++studentScheduleLoadToken;
+    if (!studentScheduleClockInterval) {
+        studentScheduleClockInterval = window.setInterval(() => {
+            if (!document.getElementById('subSiswaJadwal')?.classList.contains('hidden')) renderStudentScheduleDays();
+        }, 60000);
+    }
+    sessions.textContent = 'Memuat jadwal kelas...';
+    studentScheduleItems = [];
+    scheduleActiveDayByScope.student = getJakartaDay();
+    const uid = firebaseAuth.currentUser.uid;
+    try {
+        const candidates = [
+            state.currentUser?.classId,
+            getCurrentStudentUser()?.classId,
+            ...(Array.isArray(getCurrentStudentUser()?.classIds) ? getCurrentStudentUser().classIds : [])
+        ].map(Number).filter((value, index, values) => Number.isInteger(value) && value > 0 && values.indexOf(value) === index);
+        const membershipCollection = firebaseDb.collection('users').doc(uid).collection('classMemberships');
+        let classId = null;
+        for (const candidate of candidates) {
+            const membership = await membershipCollection.doc(String(candidate)).get();
+            if (membership.exists) {
+                classId = candidate;
+                break;
+            }
+        }
+        if (!classId) {
+            const memberships = await membershipCollection.get();
+            const membership = memberships.docs.find(document => Number(document.data().classId || document.id) > 0);
+            if (membership) classId = Number(membership.data().classId || membership.id);
+        }
+        if (token !== studentScheduleLoadToken) return;
+        if (!classId) {
+            classLabel.textContent = 'Anda belum terhubung ke kelas.';
+            sessions.textContent = 'Masuk ke kelas terlebih dahulu untuk melihat jadwal.';
+            return;
+        }
+        classLabel.textContent = `Jadwal kelas ${getClassName(classId)} · Waktu Asia/Jakarta`;
+        const snapshot = await firebaseDb.collection('schedules').doc(String(classId)).get();
+        if (token !== studentScheduleLoadToken) return;
+        studentScheduleItems = snapshot.exists && Array.isArray(snapshot.data().items) ? snapshot.data().items.filter(item =>
+            item && Number.isInteger(Number(item.day)) && Number(item.day) >= 1 && Number(item.day) <= 7
+            && typeof item.id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(item.id)
+            && typeof item.startTime === 'string' && typeof item.endTime === 'string'
+            && typeof item.subject === 'string'
+        ) : [];
+        renderStudentScheduleDays();
+    } catch (error) {
+        if (token !== studentScheduleLoadToken) return;
+        console.error('Gagal memuat jadwal siswa:', error);
+        classLabel.textContent = 'Jadwal kelas Anda.';
+        sessions.textContent = `Jadwal gagal dimuat. ${error.code || 'error'}: ${error.message || 'Periksa koneksi dan izin Firestore.'}`;
+    }
+}
+
 function adminPanelMarkup(panel) {
     const input = 'w-full p-3 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-rose-400';
+    if (panel === 'jadwal') return scheduleManagerMarkup('admin');
     if (panel === 'anggota') return `<div class='space-y-5'>
         <section class='rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4'>
             <div class='grid gap-3 sm:grid-cols-2'>
@@ -1814,7 +2331,8 @@ function switchAdminPanel(panelKey) {
         akun: 'akun',
         backup: 'backup',
         anggota: 'anggota',
-        audit: 'audit'
+        audit: 'audit',
+        jadwal: 'jadwal'
     };
     const selected = adminMap[panelKey] || 'dashboard';
     if (window.location.hash !== `#${selected}`) window.location.hash = selected;
@@ -1843,6 +2361,7 @@ function switchStudentTab(tabName) {
     const activePanel = document.getElementById(`subSiswa${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`);
     if (activePanel) {
         activePanel.classList.remove('hidden');
+        if (tabName === 'jadwal') loadStudentSchedule();
         if (['lkpd', 'latihan', 'evaluasi'].includes(tabName)) {
             const cType = tabName.charAt(0).toUpperCase() + tabName.slice(1);
             closeStudentTask(cType);
@@ -2420,6 +2939,7 @@ function switchTeacherTab(tabName) {
     if (activePanel) {
         activePanel.classList.remove('hidden');
         if (tabName === 'anggota') renderClassMembersPanel(false);
+        if (tabName === 'jadwal') initializeScheduleManager('teacher');
     }
 }
 
@@ -2874,6 +3394,7 @@ function renderGuruView() {
     });
     renderLinkedLkpdOptions('Latihan');
     renderLinkedLkpdOptions('Evaluasi');
+    initializeScheduleManager('teacher');
     const classCount = document.getElementById('guruClassCount');
     const classList = document.getElementById('guruClassList');
     if (classCount) classCount.innerText = state.classes.length;
@@ -4005,14 +4526,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.addEventListener('hashchange', () => {
     if (normalizeRole(state.currentUser?.role) === 'student' && window.location.pathname.endsWith('dashboard_siswa.html')) {
-        switchStudentTab(getTabFromHash('materi', ['kelas', 'notifikasi', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
+        switchStudentTab(getTabFromHash('materi', ['kelas', 'notifikasi', 'jadwal', 'materi', 'lkpd', 'latihan', 'evaluasi', 'hasil']));
     }
     if (normalizeRole(state.currentUser?.role) === 'teacher' && window.location.pathname.endsWith('dashboard_guru.html')) {
-        switchTeacherTab(getTabFromHash('materi', ['kelas', 'anggota', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
+        switchTeacherTab(getTabFromHash('materi', ['kelas', 'anggota', 'jadwal', 'materi', 'lkpd', 'latihan', 'evaluasi', 'review']));
     }
     if (normalizeRole(state.currentUser?.role) === 'admin' && window.location.pathname.endsWith('dashboard_admin.html')) {
         const selected = window.location.hash.replace('#', '') || 'dashboard';
-        if (['dashboard', 'konten', 'anggota', 'audit', 'tugas', 'email', 'akun', 'device', 'backup'].includes(selected)) {
+        if (['dashboard', 'konten', 'anggota', 'jadwal', 'audit', 'tugas', 'email', 'akun', 'device', 'backup'].includes(selected)) {
             renderAdminView();
         }
     }

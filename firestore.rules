@@ -223,6 +223,18 @@ service cloud.firestore {
         && roleOf(request.auth.uid) in ['teacher', 'admin'];
     }
 
+    match /schedules/{classId} {
+      allow read: if isSignedIn() && (
+        isTeacherOrAdmin() || hasClassMembership(classId)
+      );
+      allow create, update: if isTeacherOrAdmin()
+        && request.resource.data.title is string
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 100
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow delete: if isTeacherOrAdmin();
+    }
+
     match /{document=**} {
       allow read: if isSignedIn() && roleOf(request.auth.uid) == 'admin';
       allow write: if false;
