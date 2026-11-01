@@ -1481,14 +1481,18 @@ function getMemberSearchScope(scope) {
 }
 
 async function loadMembersForClass(classId) {
-    const [membershipSnapshot, legacySnapshot] = await Promise.all([
-        firebaseDb.collectionGroup('classMemberships').where('classId', '==', Number(classId)).get(),
+    const [studentSnapshot, legacySnapshot] = await Promise.all([
+        firebaseDb.collection('users').where('role', '==', 'student').get(),
         firebaseDb.collection('classMembers').where('classId', '==', Number(classId)).get()
     ]);
     const memberMap = new Map();
-    membershipSnapshot.docs.forEach(document => {
+    const studentProfiles = new Map(studentSnapshot.docs.map(document => [document.id, document.data()]));
+    const membershipSnapshots = await Promise.all(studentSnapshot.docs.map(document =>
+        document.ref.collection('classMemberships').doc(String(classId)).get()
+    ));
+    membershipSnapshots.forEach(document => {
         const membership = document.data();
-        if (membership.studentUid) {
+        if (document.exists && membership.studentUid) {
             memberMap.set(String(membership.studentUid), { ...membership, joinedAt: membership.joinedAt, classId: Number(classId) });
         }
     });
@@ -1502,10 +1506,9 @@ async function loadMembersForClass(classId) {
         }
     });
 
-    return Promise.all([...memberMap.entries()].map(async ([uid, membership]) => {
-        const profileSnapshot = await firebaseDb.collection('users').doc(uid).get();
-        const profile = profileSnapshot.exists ? profileSnapshot.data() : {};
-        if (profile.role && profile.role !== 'student') return null;
+    return [...memberMap.entries()].map(([uid, membership]) => {
+        const profile = studentProfiles.get(uid);
+        if (!profile) return null;
         return {
             uid,
             name: profile.name || membership.studentName || 'Nama tidak tersedia',
@@ -1514,7 +1517,7 @@ async function loadMembersForClass(classId) {
             classId: Number(classId),
             role: 'student'
         };
-    })).then(rows => rows.filter(Boolean).sort((left, right) => left.name.localeCompare(right.name, 'id')));
+    }).filter(Boolean).sort((left, right) => left.name.localeCompare(right.name, 'id'));
 }
 
 function renderMemberRows(scope, rows, classId) {
@@ -1602,14 +1605,17 @@ async function renderAdminMemberOverview() {
     staffList.innerHTML = '<p class="text-sm text-slate-500">Memuat akun.</p>';
     unassignedList.innerHTML = '<p class="text-sm text-slate-500">Memuat daftar siswa.</p>';
     try {
-        const [userSnapshot, membershipSnapshot, legacySnapshot] = await Promise.all([
+        const [userSnapshot, legacySnapshot] = await Promise.all([
             firebaseDb.collection('users').get(),
-            firebaseDb.collectionGroup('classMemberships').get(),
             firebaseDb.collection('classMembers').get()
         ]);
+        const studentDocuments = userSnapshot.docs.filter(document => document.data().role === 'student');
+        const membershipSnapshots = await Promise.all(studentDocuments.map(document =>
+            document.ref.collection('classMemberships').get()
+        ));
         const validClassIds = new Set(state.classes.map(item => Number(item.id)));
         const memberUids = new Set();
-        membershipSnapshot.docs.forEach(document => {
+        membershipSnapshots.flatMap(snapshot => snapshot.docs).forEach(document => {
             const membership = document.data();
             if (membership.studentUid && validClassIds.has(Number(membership.classId))) {
                 memberUids.add(String(membership.studentUid));
